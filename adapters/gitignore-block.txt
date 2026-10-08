@@ -1,0 +1,6 @@
+# atw:begin - agent-ticket-workflow run state (local only)
+.atw/runs/
+.atw/tmp/
+.atw/staging/
+.atw/backup/
+# atw:end

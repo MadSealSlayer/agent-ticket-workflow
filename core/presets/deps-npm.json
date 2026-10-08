@@ -1,0 +1,17 @@
+{
+  "name": "deps-npm",
+  "area": "deps",
+  "stack": "node",
+  "requires": [],
+  "detect": {
+    "files": [
+      "package.json"
+    ]
+  },
+  "commands": {
+    "deps": {
+      "builtin": "node-imports"
+    }
+  },
+  "notes": "New bare imports must be declared in the nearest package.json. Path aliases (@/, ~/, #, $) are ignored; add others to deps.alias_prefixes."
+}

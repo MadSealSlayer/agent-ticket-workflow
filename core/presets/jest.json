@@ -1,0 +1,40 @@
+{
+  "name": "jest",
+  "area": "tests",
+  "stack": "node",
+  "requires": [
+    "jest",
+    "jest-junit"
+  ],
+  "detect": {
+    "package_deps": [
+      "jest"
+    ]
+  },
+  "commands": {
+    "proof": {
+      "run": "npx jest --ci --reporters=default --reporters=jest-junit {id_files}",
+      "env": {
+        "JEST_JUNIT_OUTPUT_FILE": "{junit}",
+        "JEST_JUNIT_CLASSNAME": "{filepath}",
+        "JEST_JUNIT_TITLE": "{classname} {title}"
+      },
+      "id_style": "name"
+    },
+    "tests": {
+      "run": "npx jest --ci {files}",
+      "scope": "stem-match",
+      "test_globs": [
+        "*.test.*",
+        "*.spec.*"
+      ],
+      "source_globs": [
+        "*.ts",
+        "*.tsx",
+        "*.js",
+        "*.jsx"
+      ]
+    }
+  },
+  "notes": "Needs the jest-junit reporter as a devDependency. Proof ids: path/to/file.test.ts::describe title it title."
+}

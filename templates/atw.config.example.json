@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "python": "python",
+  "tickets": {
+    "globs": [
+      "tickets/**/{id}.md",
+      "tickets/{id}.md"
+    ]
+  },
+  "kinds": {
+    "enabled": [
+      "code",
+      "investigation",
+      "comms",
+      "docs",
+      "tooling"
+    ]
+  },
+  "protected_paths": [
+    "src/"
+  ],
+  "test_paths": [
+    "tests/"
+  ],
+  "placement": {
+    "investigation": "docs/agent-notes/investigations",
+    "comms": "docs/agent-notes/comms",
+    "docs": "docs",
+    "tooling": "scripts"
+  },
+  "plan_dir": ".atw/plans",
+  "commands": {
+    "proof": {
+      "run": "{python} -m pytest -q -p no:cacheprovider --junitxml={junit} {ids}",
+      "id_style": "pytest"
+    },
+    "tests": {
+      "run": "{python} -m pytest -q -p no:cacheprovider {files}",
+      "scope": "stem-match",
+      "test_globs": [
+        "test_*.py",
+        "*_test.py"
+      ],
+      "source_globs": [
+        "*.py"
+      ]
+    },
+    "lint": {
+      "run": "{python} -m ruff check --output-format json {files}",
+      "output": "ruff-json",
+      "file_globs": [
+        "*.py"
+      ],
+      "changed_lines_only": true
+    },
+    "deps": {
+      "builtin": "python-imports"
+    }
+  },
+  "timeouts": {
+    "command_seconds": 600
+  },
+  "simplify": "off",
+  "audit": {
+    "model": "opus"
+  },
+  "context": {
+    "enabled": false,
+    "index": "docs/agent-context/INDEX.md"
+  },
+  "guards": {
+    "deny": [
+      "\\bgit\\s+reset\\s+--hard\\b",
+      "\\bgit\\s+push\\b[^\\n]*\\s(--force|-f)(\\s|$)",
+      "\\bgit\\s+push\\b[^\\n]*--force-with-lease",
+      "\\bgit\\s+commit\\b[^\\n]*--amend",
+      "\\bgit\\s+clean\\b[^\\n]*\\s-[a-zA-Z]*f",
+      "\\bgit\\s+rebase\\b"
+    ],
+    "ask": [
+      "\\bgit\\s+push\\b"
+    ],
+    "protect_before_plan": true
+  },
+  "ste": {
+    "enabled": false
+  },
+  "investigation": {
+    "tools": [],
+    "notes": ""
+  }
+}

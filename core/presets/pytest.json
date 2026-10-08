@@ -1,0 +1,35 @@
+{
+  "name": "pytest",
+  "area": "tests",
+  "stack": "python",
+  "requires": [
+    "pytest"
+  ],
+  "detect": {
+    "files": [
+      "pytest.ini",
+      "conftest.py",
+      "pyproject.toml:[tool.pytest",
+      "setup.cfg:[tool:pytest",
+      "tox.ini:[pytest"
+    ]
+  },
+  "commands": {
+    "proof": {
+      "run": "{python} -m pytest -q -p no:cacheprovider --junitxml={junit} {ids}",
+      "id_style": "pytest"
+    },
+    "tests": {
+      "run": "{python} -m pytest -q -p no:cacheprovider {files}",
+      "scope": "stem-match",
+      "test_globs": [
+        "test_*.py",
+        "*_test.py"
+      ],
+      "source_globs": [
+        "*.py"
+      ]
+    }
+  },
+  "notes": "Proof ids are pytest node ids: path/test_x.py::Class::test_name[param]. Set `python` to the project's venv interpreter if it has one."
+}

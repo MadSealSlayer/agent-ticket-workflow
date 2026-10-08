@@ -1,0 +1,36 @@
+{
+  "name": "vitest",
+  "area": "tests",
+  "stack": "node",
+  "requires": [
+    "vitest"
+  ],
+  "detect": {
+    "package_deps": [
+      "vitest"
+    ]
+  },
+  "commands": {
+    "proof": {
+      "run": "npx vitest run --reporter=default --reporter=junit --outputFile.junit={junit} {id_files}",
+      "id_style": "name"
+    },
+    "tests": {
+      "run": "npx vitest run {files}",
+      "scope": "stem-match",
+      "test_globs": [
+        "*.test.*",
+        "*.spec.*"
+      ],
+      "source_globs": [
+        "*.ts",
+        "*.tsx",
+        "*.js",
+        "*.jsx",
+        "*.vue",
+        "*.svelte"
+      ]
+    }
+  },
+  "notes": "Proof ids: path/to/file.test.ts::full test title (describe > it). The whole file runs; only the named ids are judged."
+}

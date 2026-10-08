@@ -1,0 +1,26 @@
+{
+  "name": "ruff",
+  "area": "lint",
+  "stack": "python",
+  "requires": [
+    "ruff"
+  ],
+  "detect": {
+    "files": [
+      "ruff.toml",
+      ".ruff.toml",
+      "pyproject.toml:[tool.ruff"
+    ]
+  },
+  "commands": {
+    "lint": {
+      "run": "{python} -m ruff check --output-format json {files}",
+      "output": "ruff-json",
+      "file_globs": [
+        "*.py"
+      ],
+      "changed_lines_only": true
+    }
+  },
+  "notes": "Only findings on lines this run changed fail the gate."
+}

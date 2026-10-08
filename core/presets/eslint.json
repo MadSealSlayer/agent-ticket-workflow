@@ -1,0 +1,42 @@
+{
+  "name": "eslint",
+  "area": "lint",
+  "stack": "node",
+  "requires": [
+    "eslint"
+  ],
+  "detect": {
+    "files": [
+      "eslint.config.js",
+      "eslint.config.mjs",
+      "eslint.config.cjs",
+      "eslint.config.ts",
+      ".eslintrc",
+      ".eslintrc.js",
+      ".eslintrc.cjs",
+      ".eslintrc.json",
+      ".eslintrc.yml"
+    ],
+    "package_deps": [
+      "eslint"
+    ]
+  },
+  "commands": {
+    "lint": {
+      "run": "npx eslint -f json {files}",
+      "output": "eslint-json",
+      "file_globs": [
+        "*.js",
+        "*.jsx",
+        "*.ts",
+        "*.tsx",
+        "*.mjs",
+        "*.cjs",
+        "*.vue",
+        "*.svelte"
+      ],
+      "changed_lines_only": true
+    }
+  },
+  "notes": "Only errors (severity 2) on changed lines fail the gate; warnings never do."
+}
