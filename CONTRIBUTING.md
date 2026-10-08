@@ -3,13 +3,22 @@
 This workflow decides when an agent may call a ticket done. A change to a gate changes what every
 team that uses it can ship, so keep changes small and well argued.
 
+## Issues, not pull requests
+
+This repository does not accept pull requests from outside contributors. Only the maintainer
+can open them. Issues are welcome:
+
+- **Bug:** a gate, setup step or skill did the wrong thing. Use the *Bug* template.
+- **Proposal:** a new gate, kind, preset, host or behavior change. Use the *Proposal* template.
+  Say what goes wrong today and how you would know the change works.
+
+For a security problem, do not open a public issue. See [SECURITY.md](SECURITY.md).
+
 ## How changes land
 
-1. Open an issue for anything bigger than a fix: a new gate, a new kind, a new preset, a
-   behavior change in setup. Say what goes wrong today and how you will know the change works.
-2. Make a branch and keep the pull request to one concern.
-3. The pull request template asks for evidence. Fill it in.
-4. One approving review from a code owner (`CODEOWNERS`). CI must be green on Linux and Windows.
+The maintainer makes each change on a branch, with one concern per pull request. The pull
+request template asks for evidence. CI must be green on Linux and Windows before a merge.
+The rules below apply to every change.
 
 ## Rules for the code
 

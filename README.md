@@ -125,8 +125,8 @@ before you enable it. The setup asks, and recommends no.
 
 ## Contributing
 
-Changes go through pull requests. See [CONTRIBUTING.md](CONTRIBUTING.md) and
-[ROADMAP.md](ROADMAP.md).
+Issues are welcome: bugs and proposals. Pull requests from outside contributors are not
+accepted. See [CONTRIBUTING.md](CONTRIBUTING.md) and [ROADMAP.md](ROADMAP.md).
 
 ## License
 
