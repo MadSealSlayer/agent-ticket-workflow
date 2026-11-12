@@ -88,5 +88,14 @@
   "investigation": {
     "tools": [],
     "notes": ""
+  },
+  "jira": {
+    "enabled": false,
+    "site": "",
+    "projects": [],
+    "default_project": "",
+    "start_transition": null,
+    "in_progress_aliases": [],
+    "import_dir": "tickets"
   }
 }

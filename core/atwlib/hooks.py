@@ -42,7 +42,9 @@ def stop(raw: str) -> tuple[int, str]:
         if not run:
             return 0, ""
         cfg = config.load(root)
-        report = gates.evaluate_required(root, cfg, run)
+        # tests/lint/deps are never run here: a turn end must not wait on a
+        # test suite. A missing or outdated result blocks with the refresh command.
+        report = gates.evaluate_required(root, cfg, run, run_cached=False)
         missing = gates.unmet(report)
         if not missing:
             gates.record_progress(run)
@@ -58,6 +60,8 @@ def stop(raw: str) -> tuple[int, str]:
         lines = [f"{ref} ({run['kind']}) is not done yet - unmet gate(s):"]
         for name in missing:
             hint = gates.FIX_HINTS.get(name, "")
+            if name in gates.CACHED:
+                hint = f"{hint} --run {ref}"
             lines.append(f"  - {name}: {report[name]['reason']}" + (f"  ->  {hint}" if hint else ""))
         lines.append("If a decision is genuinely the user's, ask it now; that is the only reason to stop early.")
         return 0, json.dumps({"decision": "block", "reason": "\n".join(lines)})

@@ -57,7 +57,7 @@ MANIFEST = ".atw/install-manifest.json"
 BOOTSTRAP = ".atw/staging/bootstrap.json"
 CORE_DEST = ".atw/core"
 SKILL_NAMES = ("ticket-setup", "ticket", "ticket-investigation", "ticket-audit",
-               "project-context-loading", "project-context-updating", "ste-writing")
+               "project-context-loading", "project-context-updating", "ste-writing", "jira")
 TEXT_EXT = (".md", ".txt", ".json", ".py")
 BEGIN, END = "<!-- atw:begin -->", "<!-- atw:end -->"
 GI_BEGIN, GI_END = "# atw:begin", "# atw:end"

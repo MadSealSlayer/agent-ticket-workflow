@@ -188,6 +188,28 @@ class FreshInstall(InstallBase):
         self.assertEqual(self.atw("start", "T-1", "--kind", "spike").returncode, 0)
         self.assertEqual(self.atw("close", "--note", "spike demo: scaffolded").returncode, 0)
 
+    def test_jira_skill_installs_only_when_chosen_and_import_works(self):
+        self.install()
+        self.assertEqual(self.apply(self.plan()).returncode, 0)
+        self.assertFalse((self.root / ".claude/skills/jira").exists())
+
+        plan = self.plan(skills=dict(TEMPLATE_PLAN["skills"], jira="jira"))
+        data = json.loads(plan.read_text(encoding="utf-8"))
+        data["config"]["jira"].update(enabled=True, site="example.atlassian.net",
+                                      projects=[{"key": "ABC", "use": "team board"}])
+        plan.write_text(json.dumps(data), encoding="utf-8")
+        r = self.apply(plan)
+        self.assertEqual(r.returncode, 0, r.stdout)
+        skill = (self.root / ".claude/skills/jira/SKILL.md").read_text(encoding="utf-8")
+        self.assertNotIn("{{", skill)
+        self.assertIn(".atw/core/atw.py import-jira", skill)
+        self.assertIn("jira", (self.root / "AGENTS.md").read_text(encoding="utf-8"))
+
+        self.write(".atw/tmp/jira/issue.json", json.dumps({"key": "ABC-7", "summary": "s"}))
+        r = self.atw("import-jira", "--issue-file", ".atw/tmp/jira/issue.json")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertTrue((self.root / "tickets/ABC-7.md").is_file())
+
     def test_invalid_plan_writes_nothing(self):
         self.install()
         plan = self.plan()

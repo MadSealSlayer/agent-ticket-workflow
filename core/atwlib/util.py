@@ -228,11 +228,16 @@ def changed_line_ranges(root: Path, baseline_ref: str | None, files: list[str]) 
         if rc != 0:
             continue
         lines: set[int] = set()
+        saw_hunk = False
         for hunk in re.finditer(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", out, re.MULTILINE):
+            saw_hunk = True
             start = int(hunk.group(1))
             count = int(hunk.group(2)) if hunk.group(2) is not None else 1
             lines.update(range(start, start + count))
-        if lines:
+        # A diff with only deleted lines gives an empty set: no finding in that
+        # file is on a changed line. No parsed hunk gives no entry, so every
+        # finding in that file is kept.
+        if lines or saw_hunk:
             ranges[f] = lines
     return ranges
 

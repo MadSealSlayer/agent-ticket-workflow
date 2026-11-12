@@ -23,10 +23,11 @@ Read [docs/workflow.md](docs/workflow.md) for the reasoning behind it.
 - **One state engine** (`.atw/core/atw.py`). Python 3.10+ standard library only, no dependencies.
   It holds every run, gate and review packet, for every host.
 - **Skills** for the workflow: `ticket`, `ticket-investigation`, `ticket-audit`, project-context
-  load and update, and an advisory writing check.
+  load and update, an advisory writing check, and optional Jira support (`jira`) through the
+  Atlassian MCP connector.
 - **Host adapters.**
-  - Claude Code: a Stop hook that blocks the turn while a gate is unmet, a plan-mode marker
-    and a guard.
+  - Claude Code: a Stop hook that blocks the turn while a gate is unmet (from cached results,
+    so a turn end never waits on the test suite), a plan-mode marker and a guard.
   - Codex and other agents: an `AGENTS.md` block. The agent runs `atw status` before it ends a
     turn.
 - **A setup skill** (`/ticket-setup`). It looks at what your project already has, asks you about

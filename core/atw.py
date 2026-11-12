@@ -10,6 +10,8 @@ Lifecycle (every harness):
     atw status
     atw close [--context updated|no-op --why "..."] [--note "..."]
 
+Jira (when jira.enabled): atw import-jira --issue-file <json> [--notes-file <path>]
+
 Pick a run with --run TICKET/RUN_ID, --ticket TICKET, or $ATW_RUN. With none,
 the single open run on the current branch is used.
 """
@@ -346,6 +348,11 @@ def cmd_close(root: Path, cfg: dict, args) -> int:
     run = _select(root, args)
     if run["status"] != "open":
         raise state.RunError(f"{_ref(run)} is {run['status']}")
+    # The final check never reuses a cached result: the fingerprint does not
+    # cover every input (ignored files, the environment).
+    for name in gates.required_gates(run, cfg):
+        if name in gates.CACHED:
+            gates.evaluate_live(root, cfg, run, name)
     report = gates.evaluate_required(root, cfg, run)
     missing = gates.unmet(report)
     if missing:
@@ -387,6 +394,24 @@ def cmd_runs(root: Path, cfg: dict, args) -> int:
         out("no runs" if args.all else "no open runs")
     for r in runs:
         out(f"{_ref(r):40} {r['status']:8} {r['kind']:13} {r.get('host', ''):7} {r.get('branch', '')}")
+    return 0
+
+
+def cmd_import_jira(root: Path, cfg: dict, args) -> int:
+    from atwlib import jira
+    notes = ""
+    if args.notes_file:
+        try:
+            notes = Path(args.notes_file).read_text(encoding="utf-8")
+        except OSError as e:
+            raise state.RunError(f"cannot read notes file: {e}")
+    try:
+        rel_path = jira.import_issue(root, cfg, Path(args.issue_file), notes)
+    except jira.JiraImportError as e:
+        raise state.RunError(str(e))
+    key = Path(rel_path).stem
+    out(f"created {rel_path}")
+    out(f"NEXT: run the ticket workflow for {key} (atw start {key} --kind <kind>)")
     return 0
 
 
@@ -494,6 +519,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--why", required=True)
     s = add("runs", cmd_runs, select=False, help="list runs")
     s.add_argument("--all", action="store_true")
+
+    s = add("import-jira", cmd_import_jira, select=False, help="create a local ticket from a fetched Jira issue")
+    s.add_argument("--issue-file", required=True, help='JSON: {"key", "summary", "description"}')
+    s.add_argument("--notes-file", help="the ticket owner's own notes, used as given")
 
     s = add("hook", cmd_hook, select=False, help="Claude Code hook entry (stdin payload)")
     s.add_argument("name", choices=("stop", "planmode", "guard"))

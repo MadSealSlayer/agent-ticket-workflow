@@ -67,6 +67,18 @@ DEFAULTS: dict = {
     # Free-form pointers for investigation tickets: the project's own data
     # tools and where their credentials come from. Read by the skill only.
     "investigation": {"tools": [], "notes": ""},
+    # Jira through the host's Atlassian MCP connector (the `jira` skill). The
+    # core never calls Jira; `atw import-jira` only turns a fetched issue into
+    # <import_dir>/<KEY>.md.
+    "jira": {
+        "enabled": False,
+        "site": "",                   # host only, e.g. "example.atlassian.net"
+        "projects": [],               # [{"key": "ABC", "use": "the team's board"}]
+        "default_project": "",
+        "start_transition": None,     # e.g. "In Progress": move To Do issues there at start of work; None = ask
+        "in_progress_aliases": [],    # status names that already count as in progress
+        "import_dir": "tickets",
+    },
     "names": {},  # skill renames chosen at setup, e.g. {"ticket": "atw-ticket"}
 }
 
@@ -169,4 +181,34 @@ def validate(cfg: dict) -> list[str]:
     for key in ("deny", "ask"):
         if not _is_str_list((cfg.get("guards") or {}).get(key, [])):
             errs.append(f"guards.{key} must be a list of regex strings")
+    errs += _validate_jira(cfg)
+    return errs
+
+
+def _validate_jira(cfg: dict) -> list[str]:
+    from . import jira as jira_mod
+    jira = cfg.get("jira") or {}
+    if not jira.get("enabled"):
+        return []
+    errs = []
+    if not isinstance(jira.get("site"), str) or not jira_mod.SITE_RE.fullmatch(jira["site"]):
+        errs.append('jira.site must be a host name such as "example.atlassian.net" (no scheme, no path)')
+    projects = jira.get("projects")
+    if not isinstance(projects, list) or not projects or not all(
+            isinstance(p, dict) and isinstance(p.get("key"), str) and jira_mod.PROJECT_RE.fullmatch(p["key"])
+            for p in projects):
+        errs.append('jira.projects must be a non-empty list of {"key": "ABC", "use": "..."}')
+    keys = [p.get("key") for p in projects or [] if isinstance(p, dict)]
+    if jira.get("default_project") and jira["default_project"] not in keys:
+        errs.append("jira.default_project must be one of jira.projects")
+    st = jira.get("start_transition")
+    if st is not None and (not isinstance(st, str) or not st.strip()):
+        errs.append("jira.start_transition must be a status name or null")
+    if not _is_str_list(jira.get("in_progress_aliases", [])):
+        errs.append("jira.in_progress_aliases must be a list of status names")
+    imp = jira.get("import_dir")
+    if not isinstance(imp, str) or not imp.strip() or imp.startswith(("/", "..")) or "\\" in imp:
+        errs.append("jira.import_dir must be a folder inside the project")
+    elif not jira_mod.matched_by_globs(jira_mod.target_path(cfg, "ABC-1"), (cfg.get("tickets") or {}).get("globs"), "ABC-1"):
+        errs.append(f"jira.import_dir {imp}/ is not covered by tickets.globs: imported tickets could not be started")
     return errs

@@ -20,7 +20,7 @@ from pathlib import Path
 from . import config, util
 
 OUR_SKILLS = ("ticket-setup", "ticket", "ticket-investigation", "ticket-audit",
-              "project-context-loading", "project-context-updating", "ste-writing")
+              "project-context-loading", "project-context-updating", "ste-writing", "jira")
 SKILL_DIRS = (".claude/skills", ".agents/skills", ".codex/skills", ".opencode/skills", ".cursor/skills")
 COMMAND_DIRS = (".claude/commands", ".codex/prompts", ".opencode/command", ".cursor/commands")
 INSTRUCTION_FILES = ("CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md", "AGENTS.md", "AGENTS.override.md",

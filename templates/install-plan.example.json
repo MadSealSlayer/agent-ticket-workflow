@@ -94,6 +94,15 @@
     "investigation": {
       "tools": [],
       "notes": ""
+    },
+    "jira": {
+      "enabled": false,
+      "site": "",
+      "projects": [],
+      "default_project": "",
+      "start_transition": null,
+      "in_progress_aliases": [],
+      "import_dir": "tickets"
     }
   },
   "skills": {
@@ -103,7 +112,8 @@
     "ticket-audit": "ticket-audit",
     "project-context-loading": null,
     "project-context-updating": null,
-    "ste-writing": null
+    "ste-writing": null,
+    "jira": null
   },
   "skill_dirs": [
     ".claude/skills",
