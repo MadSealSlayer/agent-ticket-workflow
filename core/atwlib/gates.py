@@ -1,8 +1,11 @@
 """Gates: which ones each kind needs, and how each one is checked.
 
 Two styles, as in the original harness:
-  LIVE      recomputed fresh on every call, nothing cached to go stale:
-            nocode, placement, provenance, tests, lint, deps.
+  LIVE      computed by a script: nocode, placement, provenance (recomputed
+            on every call), plus tests, lint, deps. Those three are CACHED:
+            their result is saved with a fingerprint of the change and
+            reused while it matches. The Stop hook never runs them itself,
+            so a turn end never waits on a test suite.
   RECORDED  written by a CLI command after a real check, then re-validated:
             plan   (plan-mode stamp or approved plan file; stale if the plan copy changes)
             red    (the proof set failed on behavior; `tests` re-proves it green)
@@ -14,6 +17,7 @@ repo, a command result, or a hash, never the agent's say-so.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -23,6 +27,7 @@ from . import junit, runner, util
 
 LIVE = ("nocode", "placement", "provenance", "tests", "lint", "deps")
 RECORDED = ("plan", "red", "simplify", "audit")
+CACHED = ("tests", "lint", "deps")  # too slow to rerun on every Stop event
 NONCODE_KINDS = ("investigation", "comms", "docs", "tooling")
 RELEASE_VALVE = 3
 
@@ -314,13 +319,43 @@ LIVE_EVALUATORS = {
 }
 
 
+def gate_fingerprint(root: Path, cfg: dict, run: dict) -> str:
+    """Hash of what a CACHED gate's result depends on: the path and content of
+    every changed file, the run's kind, baseline, proof set and red record,
+    and the configured commands. Ignored files and the environment are not
+    covered, so `atw close` always recomputes instead of trusting it."""
+    red = (run.get("gates") or {}).get("red") or {}
+    h = hashlib.sha256(json.dumps({
+        "kind": run.get("kind"),
+        "baseline_ref": run.get("baseline_ref"),
+        "proof_ids": run.get("proof_ids") or [],
+        "red": [red.get("state"), red.get("ts")],
+        "commands": cfg.get("commands"),
+        "python": cfg.get("python"),
+    }, sort_keys=True, default=str).encode("utf-8"))
+    for f in _changed(root, run):
+        h.update(f.encode("utf-8") + b"\0")
+        try:
+            h.update(hashlib.sha256((root / f).read_bytes()).digest())
+        except OSError:
+            h.update(b"<missing>")
+    return h.hexdigest()
+
+
 def evaluate_live(root: Path, cfg: dict, run: dict, name: str) -> dict:
+    """Run one live gate now and save its result on the run. Always
+    recomputes; this is how `atw gate` refreshes a cached gate."""
+    # Taken before the gate runs: a file edited during the run then makes
+    # the saved result stale instead of wrongly fresh.
+    fingerprint = gate_fingerprint(root, cfg, run) if name in CACHED else None
     try:
         result = LIVE_EVALUATORS[name](root, cfg, run)
     except Exception as e:  # a crashing gate is a failing gate, never a pass
         result = _fail(f"gate '{name}' crashed: {e}")
-    run.setdefault("gates", {})[name] = {"state": result["state"], "by": "script", "ts": util.now_iso(),
-                                         "reason": result["reason"]}
+    entry = {"state": result["state"], "by": "script", "ts": util.now_iso(), "reason": result["reason"]}
+    if fingerprint is not None:
+        entry["fingerprint"] = fingerprint
+    run.setdefault("gates", {})[name] = entry
     return result
 
 
@@ -360,10 +395,26 @@ def eval_recorded(root: Path, cfg: dict, run: dict, name: str) -> dict:
     return {"state": "passed", "reason": gate.get("reason") or "recorded"}
 
 
-def evaluate_required(root: Path, cfg: dict, run: dict) -> dict:
+def evaluate_required(root: Path, cfg: dict, run: dict, run_cached: bool = True) -> dict:
+    """{gate: {"state", "reason"}} for every gate this run's kind needs.
+    CACHED gates reuse their saved result while `gate_fingerprint` matches;
+    otherwise they run, or - with run_cached=False, as the Stop hook calls
+    it - report `stale` without running anything."""
     report = {}
+    fingerprint = None
     for name in required_gates(run, cfg):
-        if name in LIVE:
+        if name in CACHED:
+            if fingerprint is None:
+                fingerprint = gate_fingerprint(root, cfg, run)
+            gate = (run.get("gates") or {}).get(name) or {}
+            if gate.get("fingerprint") == fingerprint and "reason" in gate:
+                report[name] = {"state": gate["state"], "reason": gate["reason"]}
+            elif run_cached:
+                r = evaluate_live(root, cfg, run, name)
+                report[name] = {"state": r["state"], "reason": r["reason"]}
+            else:
+                report[name] = {"state": "stale", "reason": "no result for the current change"}
+        elif name in LIVE:
             r = evaluate_live(root, cfg, run, name)
             report[name] = {"state": r["state"], "reason": r["reason"]}
         else:

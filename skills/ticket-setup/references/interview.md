@@ -93,6 +93,20 @@ existing permission rules in `.claude/settings.json`. Ask whether to keep, edit 
 **D4. Investigation tools** (only if investigation is enabled). → `investigation.tools`,
 `investigation.notes`. Confirm the helpers you found and where credentials come from.
 
+**D5. Jira** (only if the team tracks tickets in Jira). → `jira.*`, plan `skills.jira`.
+Jira is reached through the host's Atlassian MCP connector; the core never calls Jira and needs
+no token. Ask:
+- Use Jira? If no, leave `jira.enabled` false and `skills.jira` null.
+- The site host (`example.atlassian.net`) and the projects in scope, each with a one-line use
+  (`jira.projects`, `jira.default_project`).
+- Start of work: move a To Do issue to a status automatically when work starts? If yes, which
+  status (`jira.start_transition`, e.g. `In Progress`) and which other status names already
+  count as in progress (`jira.in_progress_aliases`). If no, leave it `null`: the agent asks.
+- Where imported tickets go (`jira.import_dir`). It must be covered by `tickets.globs`.
+
+When enabled, install the `jira` skill. Check that the connector is connected in the user's host;
+if not, tell them how to add it, and continue (Jira failures never block the workflow).
+
 ## E. Instruction files and collisions
 
 Each item below has a default from `git_mode`. Show the user the resolved defaults (the dry

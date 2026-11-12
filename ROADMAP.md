@@ -18,10 +18,10 @@ Open design questions:
 
 ## More ticket sources
 
-Version 1 reads local markdown files (`tickets.globs`). Next:
+Tickets come from local markdown files (`tickets.globs`), and from Jira through the host's
+MCP connector and `atw import-jira` (ADR 0014). Next:
 - **Pasted text:** `atw start --from-stdin`, saved under `.atw/`.
-- **Jira:** read-only fetch to a local file, with credentials from the user's own environment.
-- **GitHub Issues:** the same, through `gh`.
+- **GitHub Issues:** fetch to a local file through `gh`, the same way as Jira.
 
 The ticket file stays read-only to the workflow, whatever its source.
 

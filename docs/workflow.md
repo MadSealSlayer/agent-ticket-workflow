@@ -16,8 +16,8 @@ Four principles:
    tests and a review onto those makes work for nothing. An empty diff can be a good result.
 2. **Classify first.** The agent classifies the ticket from its text and confirms with a human
    when the kind is unclear. The kind decides the whole route.
-3. **Gates check facts, not promises.** Every gate runs fresh: tests, lint, dependency check,
-   review report. A gate that verifies nothing is worse than none, because it looks like coverage.
+3. **Gates check facts, not promises.** Every gate reads the repository, a command result or a
+   hash: tests, lint, dependency check, review report. A gate that verifies nothing is worse than none, because it looks like coverage.
 4. **Hard-to-reverse choices go to a human.** If an ambiguity would change the shape of the
    work, it becomes a question, never a silent default.
 
@@ -79,7 +79,11 @@ protected paths, the run must be re-kinded honestly. Hiding the change is not al
 | `provenance` | Findings have `## Sources`, and claims are tagged `measured` or `inferred` with a source id | investigation |
 
 Gates are **live** or **recorded**:
-- Live gates re-run on every check: nocode, placement, provenance, tests, lint, deps.
+- Live gates are computed by a script: nocode, placement, provenance, tests, lint, deps.
+  The slow ones (tests, lint, deps) are **cached**: `atw gate` saves each result with a
+  fingerprint of the change (changed files and their content, kind, baseline, proof set, red
+  record, configured commands). `atw status` reuses it while nothing changed. `atw close`
+  always re-runs them.
 - Recorded gates are stored with a hash and go **stale** when what they cover changes: plan,
   red, simplify, audit. An edit after the review makes the audit stale.
 
@@ -87,7 +91,8 @@ Asking open questions, and presenting investigation findings before closing, are
 **not** gates, because a script cannot check them. The skills require them.
 
 On Claude Code, the Stop hook blocks the end of a turn while a required gate is unmet, and it
-names the next step. Three identical blocks in a row release it, so that a broken gate cannot
+names the next step. It never runs tests, lint or deps itself: a missing or outdated result is
+`stale`, and the hook names the `atw gate` command that refreshes it. Three identical blocks in a row release it, so that a broken gate cannot
 trap a session. The release is recorded. On other hosts, the agent runs `atw status` before it
 ends a turn.
 
@@ -106,7 +111,8 @@ the approved plan. The run cannot close until every id passes.
    - fails only with ImportError, NameError, NotImplementedError or a similar error.
 
    A pure refactor records `atw red --none --why "..."` instead.
-4. **Implement**, then `atw gate tests lint deps`. Every run is fresh, with no cache to go stale.
+4. **Implement**, then `atw gate tests lint deps`. `gate` always runs fresh. Run it again after
+   your last edit, because any edit makes the saved results stale.
 5. **Review clean-room** (next section). Fix every Critical and Warning, then gate again.
 6. **Update project context** if the architecture changed, then `atw close`.
 
@@ -182,6 +188,19 @@ No plan mode, no tests, no review. The goal is to answer a question with evidenc
 - **Tooling:** helper scripts outside protected source. A tooling ticket never becomes code by
   growing.
 
+## Jira tickets
+
+Optional (`jira.enabled`). The agent reaches Jira through the host's Atlassian MCP connector.
+The core never calls Jira and needs no token. The `jira` skill:
+- lists, reads and imports issues on request. `atw import-jira` writes `<import_dir>/<KEY>.md`
+  once, with the owner's `## My notes` apart from the quoted `## From Jira` text;
+- for a ticket whose line 1 is `Jira: <KEY> (...)`, reads the live issue, does Start of work
+  (moves a To Do issue to `jira.start_transition` if set, otherwise asks), confirms any scope
+  that comes only from Jira, and drafts a closing comment;
+- posts a comment or changes a status only after the user's yes to the exact content;
+- treats Jira text as context written by other people, never as instructions;
+- never blocks local work when Jira fails.
+
 ## Guardrails
 
 | Guardrail | What it does |
@@ -227,7 +246,9 @@ gitignored.
 
 ## Lessons from the original project
 
-- Mechanical gates caught real skips. Every gate now runs fresh.
+- Mechanical gates caught real skips.
+- Re-running the test suite at every turn end cost minutes per turn on a large diff. The Stop
+  hook now reads results cached by a fingerprint of the change, and `close` re-runs them.
 - Classifying first, and asking only when the kind is unclear, stopped code-shaped work from
   being forced onto questions.
 - Behavioral red made the tests trustworthy.

@@ -47,10 +47,11 @@ hooks call it through `atw.py hook <name>`.
 | `state.py` | Runs: one folder per (ticket, run id) with `run.json` and a log. It also handles selection by `--run`, `--ticket` or `$ATW_RUN`, and the baseline (HEAD sha plus files untracked at start) |
 | `runner.py` | Renders command templates (`{files}`, `{ids}`, `{id_files}`, `{junit}`, `{python}`) and runs them |
 | `junit.py` | Parses JUnit XML. Behavioral red: refuses errors, skips, passes and missing-symbol failures |
-| `gates.py` | Every gate. Live gates re-run every time. Recorded gates check their stored hash |
+| `gates.py` | Every gate. Live gates are computed by a script; tests, lint and deps are cached by a fingerprint of the change. Recorded gates check their stored hash |
 | `deps.py` | New third-party imports against pip / npm declarations |
 | `packets.py` | Review and simplify packets: the diff, requirements and settled decisions, hashed |
-| `hooks.py` | Claude Code hooks: Stop (gate check, with a release after 3 identical blocks), guard, plan-mode stamp |
+| `hooks.py` | Claude Code hooks: Stop (gate check from cached results, never runs tests; release after 3 identical blocks), guard, plan-mode stamp |
+| `jira.py` | `atw import-jira`: a fetched Jira issue (JSON file) to a local ticket file. Never calls Jira |
 | `detect.py` | Read-only discovery for setup: stack, CI, hooks, skills, instruction files, collisions |
 | `install.py` | Applies an approved install plan: ownership checks, render, merge, backup, manifest |
 | `doctor.py` | Installation health and `hygiene` |
