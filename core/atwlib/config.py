@@ -261,8 +261,16 @@ def _validate_verify(cfg: dict) -> list[str]:
         n = v.get(key)
         if not isinstance(n, int) or isinstance(n, bool) or n < 1:
             errs.append(f"verify.{key} must be a positive integer")
-    if not _is_str_list(v.get("ignore")):
+    ignore = v.get("ignore")
+    if not _is_str_list(ignore):
         errs.append("verify.ignore must be a list of paths")
+    else:
+        # These paths are left out of the reviewed diff: never the whole tree or protected source.
+        protected = cfg.get("protected_paths") if _is_str_list(cfg.get("protected_paths")) else []
+        bad = [p for p in ignore if p.strip().strip("/") in ("", ".")
+               or any(util.under_any(p, [s]) or util.under_any(s, [p]) for s in protected)]
+        if bad:
+            errs.append(f"verify.ignore must not cover the whole project or protected_paths: {bad}")
     return errs
 
 

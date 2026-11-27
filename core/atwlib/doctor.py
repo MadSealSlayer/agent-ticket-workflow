@@ -252,8 +252,11 @@ def _verify_check(r: Report, root: Path, cfg: dict) -> None:
         r.ok(f"verify: big code runs are checked for real ({v['how'].strip()[:60]})")
         return
     from . import detect
-    found = next((w["found_in"] for w in detect.detect(root).get("similar_workflows", [])
-                  if w["pattern"] == "realistic verification"), [])
+    try:
+        found = next((w["found_in"] for w in detect.detect(root).get("similar_workflows", [])
+                      if w["pattern"] == "realistic verification"), [])
+    except Exception:  # detection is a hint here; never crash doctor over it
+        found = []
     where = f" - this project has one ({', '.join(found[:3])}): put it in verify.how" if found else ""
     if v.get("when") == "off":
         r.warn(f"verify.when is off: no code run is checked for real before close{where}")

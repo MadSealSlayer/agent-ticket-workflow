@@ -140,6 +140,11 @@ class WhenRequired(Project):
         bad = {**config.load(self.root), "verify": {"when": "sometimes", "how": 1, "min_planned_files": 0,
                                                     "min_proof_ids": 8, "recheck_after_rounds": 2, "ignore": "x"}}
         self.assertEqual(len([e for e in config.validate(bad) if e.startswith("verify.")]), 4)
+        for hole in (["."], ["./"], ["src/"], ["src/sub/"], [""]):  # would hide the change from the review
+            cfg = {**config.load(self.root), "verify": {**config.DEFAULTS["verify"], "ignore": hole}}
+            self.assertTrue(any("verify.ignore" in e for e in config.validate(cfg)), hole)
+        ok = {**config.load(self.root), "verify": {**config.DEFAULTS["verify"], "ignore": ["test-results/"]}}
+        self.assertEqual(config.validate(ok), [])
 
     def test_doctor_names_the_projects_own_check(self):
         self.write(".claude/skills/check-ui/SKILL.md",
