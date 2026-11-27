@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -15,6 +16,33 @@ from pathlib import Path
 from . import config, runner, state, util
 
 MANIFEST = ".atw/install-manifest.json"
+
+
+# (event, tool) pairs our hook entries must cover; None = no matcher (Stop).
+HOOK_COVERAGE = (("Stop", None), ("PreToolUse", "Bash"), ("PreToolUse", "Edit"), ("PreToolUse", "ExitPlanMode"),
+                 ("PostToolUse", "ExitPlanMode"), ("PostToolUse", "AskUserQuestion"))
+
+
+def _matches(matcher, tool: str | None) -> bool:
+    if tool is None or matcher in (None, "", "*"):
+        return True
+    try:
+        return re.fullmatch(str(matcher), tool) is not None
+    except re.error:
+        return False
+
+
+def missing_hook_coverage(settings: dict) -> list[str]:
+    """The (event, tool) pairs that none of our hook entries covers, as
+    "Event" or "Event:Tool". An install from before plan approval in T3 Code
+    lacks PreToolUse:ExitPlanMode and PostToolUse:AskUserQuestion."""
+    hooks = settings.get("hooks") if isinstance(settings.get("hooks"), dict) else {}
+    out = []
+    for event, tool in HOOK_COVERAGE:
+        ours = [e for e in hooks.get(event) or [] if isinstance(e, dict) and ".atw/core/atw.py" in json.dumps(e)]
+        if not any(_matches(e.get("matcher"), tool) for e in ours):
+            out.append(event if tool is None else f"{event}:{tool}")
+    return out
 
 
 class Report:
@@ -74,6 +102,7 @@ def run(root: Path, run_commands: bool = False) -> int:
                 r.fail(f"config: {p}")
             if not problems:
                 r.ok(f"config valid (kinds: {', '.join(cfg['kinds']['enabled'])})")
+            _legacy_guard_check(r, raw)
 
     # Manifest and owned files.
     if not manifest:
@@ -114,12 +143,12 @@ def run(root: Path, run_commands: bool = False) -> int:
                 except Exception:
                     r.fail(f"{rel} is not valid JSON")
                     continue
-                ours = {ev: any(".atw/core/atw.py" in json.dumps(e) for e in (settings.get("hooks") or {}).get(ev, []))
-                        for ev in ("Stop", "PreToolUse", "PostToolUse")}
-                if all(ours.values()):
+                missing = missing_hook_coverage(settings)
+                if not missing:
                     r.ok(f"Claude hooks registered in {rel} (Stop, PreToolUse, PostToolUse)")
                 else:
-                    r.fail(f"Claude hooks missing in {rel} for: {', '.join(k for k, v in ours.items() if not v)}")
+                    r.fail(f"Claude hooks missing in {rel} for: {', '.join(missing)} - the entries are absent or "
+                           "from an older version; re-run setup (apply) to update them")
             if not hook_files:
                 r.warn("Claude hooks were skipped at setup - the Stop gate is not enforced in Claude Code")
         blocks = [rel for rel, k in kinds.items() if k == "block"]
@@ -146,7 +175,7 @@ def run(root: Path, run_commands: bool = False) -> int:
             if k == "ignore" and Path(rel).is_absolute():
                 r.warn(f"linked worktree: our ignore block is in {rel}, which is shared with the main checkout "
                        "and every other worktree - the same paths are hidden from git there too")
-        for event in ("stop", "guard", "planmode"):
+        for event in ("stop", "guard", "planmode", "planproposed"):
             res = subprocess.run([sys.executable, str(root / ".atw/core/atw.py"), "hook", event],
                                  input="{}", capture_output=True, text=True, cwd=root,
                                  env={**os.environ, "ATW_PROJECT_DIR": str(root)})
@@ -175,6 +204,14 @@ def run(root: Path, run_commands: bool = False) -> int:
         r.ok(f"ticket folder exists ({', '.join(sorted(b for b in bases if (root / b).is_dir()))})")
     else:
         r.warn(f"no ticket folder yet ({', '.join(sorted(bases))}) - tickets are read from {globs}")
+    try:
+        from . import jira, tickets
+        new_id, new_path = tickets.plan_path(root, cfg)
+        if not jira.matched_by_globs(new_path, globs, new_id):
+            r.warn(f"tickets.new.path gives {new_path}, which tickets.globs does not find - "
+                   "`atw new-ticket` will refuse until one of them is changed")
+    except Exception as e:  # an invalid tickets.new is already a config FAIL
+        r.warn(f"tickets.new could not be checked: {e}")
 
     # Commands.
     for name in ("proof", "tests", "lint"):
@@ -196,11 +233,53 @@ def run(root: Path, run_commands: bool = False) -> int:
         else:
             r.warn("--run-commands: the tests command is file-scoped; it runs per ticket, not here")
 
+    _verify_check(r, root, cfg)
+
     # Open runs.
     runs = state.open_runs(root)
     if runs:
         r.warn(f"{len(runs)} open run(s): {', '.join(x['ticket'] + '/' + x['run_id'] for x in runs[:5])}")
     return r.print()
+
+
+def _verify_check(r: Report, root: Path, cfg: dict) -> None:
+    """A project's own way of running a change for real must not be dropped
+    by the install: warn while `verify` does not use it."""
+    if "code" not in ((cfg.get("kinds") or {}).get("enabled") or []):
+        return
+    v = cfg.get("verify") or {}
+    if v.get("how", "").strip() and v.get("when") != "off":
+        r.ok(f"verify: big code runs are checked for real ({v['how'].strip()[:60]})")
+        return
+    from . import detect
+    found = next((w["found_in"] for w in detect.detect(root).get("similar_workflows", [])
+                  if w["pattern"] == "realistic verification"), [])
+    where = f" - this project has one ({', '.join(found[:3])}): put it in verify.how" if found else ""
+    if v.get("when") == "off":
+        r.warn(f"verify.when is off: no code run is checked for real before close{where}")
+    else:
+        r.warn(f"verify.how is empty: big code runs can close only if the user accepts unrun checks{where}")
+
+
+def _legacy_guard_check(r: Report, raw: dict) -> None:
+    """Warn about old raw-text git regexes in guards.deny/ask. They match the
+    text anywhere in a command, so `echo "git push"` or a sed pattern is
+    blocked too. Suggest the guards.git rules; never rewrite the file."""
+    legacy = config.legacy_git_patterns(raw)
+    if not legacy:
+        return
+    git = (raw.get("guards") or {}).get("git")
+    git = git if isinstance(git, dict) else config.DEFAULTS["guards"]["git"]
+    suggestion = {}
+    for kind in ("deny", "ask"):
+        rules = [x for x in git.get(kind) or [] if isinstance(x, str)]
+        suggestion[kind] = rules + [rule for _, rule in legacy.get(kind, []) if rule not in rules]
+    suggestion["ask"] = [x for x in suggestion["ask"] if x not in suggestion["deny"]]
+    for kind, found in legacy.items():
+        r.warn(f"config: guards.{kind} has old git regex(es) that also match quoted text "
+               f"(echo \"git ...\", sed/grep patterns): {', '.join(p for p, _ in found)}")
+    r.warn('config: remove them from guards.deny/guards.ask and use the parsed git rules instead: '
+           f'"git": {json.dumps(suggestion)}')
 
 
 def _visible_in_git(root: Path, manifest: dict) -> list[str]:

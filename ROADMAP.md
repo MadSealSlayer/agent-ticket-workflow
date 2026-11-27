@@ -18,12 +18,12 @@ Open design questions:
 
 ## More ticket sources
 
-Tickets come from local markdown files (`tickets.globs`), and from Jira through the host's
-MCP connector and `atw import-jira` (ADR 0014). Next:
-- **Pasted text:** `atw start --from-stdin`, saved under `.atw/`.
+Tickets come from local markdown files (`tickets.globs`), from Jira through the host's MCP
+connector and `atw import-jira` (ADR 0014), and from the conversation through `/ticket new` and
+`atw new-ticket` (ADR 0015, done in 0.3.0). Next:
 - **GitHub Issues:** fetch to a local file through `gh`, the same way as Jira.
 
-The ticket file stays read-only to the workflow, whatever its source.
+The ticket file stays read-only to the workflow after it is created, whatever its source.
 
 ## Spike rebuild
 
@@ -51,12 +51,6 @@ Changed-lines lint now reads `ruff-json` and `eslint-json`. Add more formats:
 It would keep edited files and list them. Version 1 has no uninstall. The manifest already holds
 what an uninstall needs. A pilot showed why it matters: a local trial in a linked
 worktree leaves its block in the shared `.git/info/exclude` after the worktree is deleted.
-
-## Karma (Angular) preset
-
-Karma has no single-test filter and no JUnit reporter by default. An Angular pilot needed a
-wrapper that runs one spec file per call (`ng test --include`) and installs
-`karma-junit-reporter` without saving it. A preset should ship that wrapper.
 
 ## Smaller items
 

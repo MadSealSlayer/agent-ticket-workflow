@@ -52,6 +52,9 @@ WORKFLOW_HINTS = {
     "ticket routing": r"\b(ticket kind|classify the ticket|investigation ticket|ticket workflow)\b",
     "stop/gate hooks": r"\b(Stop hook|ticket_gate|gate(s)? (must|before)|decision\"?: ?\"block)\b",
     "spec-driven": r"\b(SDD|spec[- ]driven|openspec|spec-kit|/specify)\b",
+    # Running the change for real. Setup must keep it: wire it into `verify.how`, never drop it.
+    "realistic verification": r"\b(playwright|cypress|puppeteer|selenium|e2e|end[- ]to[- ]end|"
+                              r"integration tests?|dev server|ng serve|npm run (dev|start)|smoke test)\b",
 }
 HOOK_EVENTS_WE_USE = ("Stop", "PreToolUse", "PostToolUse")
 SCAN_LIMIT = 200_000
@@ -132,7 +135,28 @@ def _stack(root: Path, presets: dict) -> dict:
             matched.append({"preset": name, "area": preset.get("area"), "evidence": hit_files + hit_deps})
     venv = next((v for v in (".venv", "venv", "env") if (root / v / "pyvenv.cfg").is_file()), None)
     return {"languages": langs, "package_manager": lock, "packages": pkgs, "presets_matched": matched,
-            "python_venv": venv, "unsupported": [l for l in langs if l not in ("python", "node", "go")]}
+            "python_venv": venv, "unsupported": [l for l in langs if l not in ("python", "node", "go")],
+            "angular": _angular(root)}
+
+
+def _angular(root: Path) -> list[dict]:
+    """angular.json projects and their test builders. A Karma builder means the
+    `karma` preset; its wrapper maps spec files to these projects."""
+    data = util.read_json(root / "angular.json", default=None)
+    if not isinstance(data, dict):
+        return []
+    out = []
+    for name, proj in (data.get("projects") or {}).items():
+        if not isinstance(proj, dict):
+            continue
+        targets = proj.get("architect") or proj.get("targets") or {}
+        test = targets.get("test") if isinstance(targets, dict) else None
+        test = test if isinstance(test, dict) else {}
+        builder = test.get("builder")
+        out.append({"project": name, "root": proj.get("root"), "test_builder": builder,
+                    "karma": bool(builder and "karma" in builder),
+                    "test_tsconfig": (test.get("options") or {}).get("tsConfig")})
+    return out
 
 
 def _git(root: Path) -> dict:
@@ -385,6 +409,9 @@ def render(r: dict) -> str:
     L.append(f"stack: {', '.join(s['languages']) or 'unknown'} | package manager: {s['package_manager']} | venv: {s['python_venv']}")
     for m in s["presets_matched"]:
         L.append(f"  preset candidate: {m['preset']} ({m['area']}) <- {', '.join(m['evidence'])}")
+    for a in s.get("angular") or []:
+        L.append(f"  angular project {a['project']} (root '{a['root']}'): test builder {a['test_builder'] or 'none'}"
+                 + (f", tsconfig {a['test_tsconfig']} (karma preset)" if a["karma"] else ""))
     for p in s["packages"][:10]:
         scripts = ", ".join(f"{k}={v}" for k, v in list(p["scripts"].items())[:6])
         L.append(f"  package {p['path']}: scripts: {scripts or '-'}")

@@ -6,7 +6,7 @@
 - every skill has frontmatter with name and description
 - rendered skills and adapters use only known tokens; the setup skill uses none
 - every JSON file parses; presets have the required keys
-- the example config validates
+- the example config validates, and its tickets.new path is found by its globs
 - no hardcoded remote URLs (use <ORG>/<REPO> placeholders)
 """
 from __future__ import annotations
@@ -19,7 +19,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "core"))
 
-from atwlib import config, install  # noqa: E402
+from atwlib import config, install, jira  # noqa: E402
 
 SKIP = {".git", "dist", "__pycache__", ".venv", "venv", ".idea", ".vscode", "node_modules"}
 REMOTE = re.compile(r"(https?://(www\.)?(github|gitlab|bitbucket)\.(com|org)/(?!<ORG>)[\w.-]+"
@@ -76,6 +76,11 @@ def main() -> int:
 
     example = json.loads((ROOT / "templates/atw.config.example.json").read_text(encoding="utf-8"))
     errors += [f"templates/atw.config.example.json: {e}" for e in config.validate(example)]
+    for cfg_name, cfg in (("core/atwlib/config.py DEFAULTS", config.DEFAULTS), ("templates/atw.config.example.json",
+                                                                                   config._merge(config.DEFAULTS, example))):
+        new_path = cfg["tickets"]["new"]["path"].format(id="001", n=1, lo=1, hi=100)
+        if not jira.matched_by_globs(new_path, cfg["tickets"]["globs"], "001"):
+            errors.append(f"{cfg_name}: tickets.new.path is not covered by tickets.globs")
 
     for p in files("*"):
         if p.is_file() and p.suffix in {".py", ".md", ".json", ".txt", ".yml", ".yaml", ""}:

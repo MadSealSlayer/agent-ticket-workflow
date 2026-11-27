@@ -7,10 +7,14 @@ Lifecycle (every harness):
     atw red --test "<id>" [--test ...]   |   atw red --none --why "..."                     (code)
     atw gate tests lint deps
     atw review-packet  ->  fresh reviewer  ->  atw accept-review --report <path>           (code)
+    atw verify-packet  ->  fresh verifier  ->  atw accept-verify --report <path>  (big code runs,
+                           in parallel with the review)
     atw status
     atw close [--context updated|no-op --why "..."] [--note "..."]
 
 Jira (when jira.enabled): atw import-jira --issue-file <json> [--notes-file <path>]
+From the conversation (after the user approves the draft):
+    atw new-ticket --title "<title>" --body-file <path> [--dry-run]
 
 Pick a run with --run TICKET/RUN_ID, --ticket TICKET, or $ATW_RUN. With none,
 the single open run on the current branch is used.
@@ -88,6 +92,11 @@ def _split_files(raw: str) -> list[str]:
     return files
 
 
+def _announce_verify(run: dict, cfg: dict, before: bool) -> None:
+    if not before and gates.verify_required(run, cfg):
+        out("  + now required: verify (a big change: run it for real next to the review - atw verify-packet)")
+
+
 def _print_report(report: dict) -> None:
     for name, r in report.items():
         mark = "OK" if r["state"] == "passed" else r["state"].upper()
@@ -144,7 +153,8 @@ def cmd_start(root: Path, cfg: dict, args) -> int:
         out("NEXT: spikes use the experimental spike workflow (see its skill). No gates are armed.")
     elif run["kind"] == "code":
         if host == "claude":
-            out("NEXT: call EnterPlanMode now. Ask the open questions there. After ExitPlanMode: atw plan --files \"...\"")
+            out("NEXT: call EnterPlanMode now. Ask the open questions there. After ExitPlanMode: atw plan --files \"...\" "
+                "(in T3 Code, ask Approve/Decline with AskUserQuestion, header `Plan`, first)")
         else:
             out("NEXT: plan with your host's planning mode, save the plan to a file, get the user's explicit approval, "
                 "then: atw plan --files \"...\" --plan-file <path> --approval \"<the user's words>\"")
@@ -192,11 +202,18 @@ def cmd_plan(root: Path, cfg: dict, args) -> int:
             raise state.RunError("--no-plan-mode needs --why \"<why a plan round-trip would be theater here>\"")
         evidence["plan_mode_skipped"] = args.why
     elif run.get("host") == "claude" and not args.plan_file:
-        stamp = state.planmode_epoch(root, run["ticket"], run.get("branch") or util.current_branch(root))
+        stamp, record = state.planmode_approval(root, run["ticket"], run.get("branch") or util.current_branch(root))
         if stamp is None or stamp < run["started_at_epoch"]:
-            raise state.RunError("no ExitPlanMode was recorded after this run started. Call EnterPlanMode, "
-                                 "design the change with the user, then ExitPlanMode, then re-run this.")
+            raise state.RunError("no plan approval (ExitPlanMode) was recorded after this run started. Call "
+                                 "EnterPlanMode, design the change with the user, then ExitPlanMode, then re-run "
+                                 "this. In T3 Code, ExitPlanMode returns an error: then ask Approve/Decline with "
+                                 "AskUserQuestion (header `Plan`) and re-run this after an Approve.")
         evidence["planmode_at"] = stamp
+        evidence["route"] = record.get("route", "exit-plan-mode")
+        if record.get("answer"):
+            evidence["answer"] = record["answer"]
+        if record.get("notes"):
+            evidence["notes"] = record["notes"]
     else:
         if not args.plan_file or not args.approval:
             raise state.RunError("this host needs --plan-file <path> and --approval \"<the user's approval, "
@@ -209,11 +226,13 @@ def cmd_plan(root: Path, cfg: dict, args) -> int:
         shutil.copyfile(src, copy)
         evidence.update({"plan_source": util.rel(root, src), "plan_copy": util.rel(root, copy),
                          "plan_hash": util.sha256_file(copy), "approval": args.approval})
+    verify_before = gates.verify_required(run, cfg)
     run["planned_files"] = files
     run["gates"]["plan"] = {"state": "passed", "by": "recorded", "ts": util.now_iso(),
                             "reason": f"approved ({len(files)} planned files)", "evidence": evidence}
     state.save(root, run)
     out(f"{_ref(run)}: plan recorded ({len(files)} planned files)")
+    _announce_verify(run, cfg, verify_before)
     out("NEXT: write the proof tests (one per acceptance criterion), stub new code so they fail on behavior, "
         "then: atw red --test \"<id>\" ...")
     return 0
@@ -247,6 +266,7 @@ def cmd_red(root: Path, cfg: dict, args) -> int:
         raise state.RunError("red refused - every proof id must fail on behavior before the change")
     proof = list(dict.fromkeys([*run.get("proof_ids", []), *ids]))
     prev = ((run["gates"].get("red") or {}).get("evidence") or {}).get("verdicts", {})
+    verify_before = gates.verify_required(run, cfg)
     run["proof_ids"] = proof
     run["gates"]["red"] = {"state": "passed", "by": "recorded", "ts": util.now_iso(),
                            "reason": f"{len(proof)} proof id(s) failed on behavior",
@@ -254,6 +274,7 @@ def cmd_red(root: Path, cfg: dict, args) -> int:
                                         "command": result["command"]}}
     state.save(root, run)
     out(f"{_ref(run)}: red recorded - proof set is {len(proof)} id(s). Implement, then: atw gate tests")
+    _announce_verify(run, cfg, verify_before)
     return 0
 
 
@@ -302,6 +323,25 @@ def cmd_accept_review(root: Path, cfg: dict, args) -> int:
         raise state.RunError("--override and --user-approved go together")
     res = packets.accept_review(root, cfg, run, root / args.report, args.override, args.user_approved)
     out(f"{_ref(run)}: audit passed - {res['reason']}")
+    return 0
+
+
+def cmd_verify_packet(root: Path, cfg: dict, args) -> int:
+    run = _select(root, args)
+    info = packets.verify_packet(root, cfg, run)
+    out(f"{_ref(run)}: verification round {info['round']} packet written")
+    out(f"  packet:    {info['packet']}")
+    out(f"  artifacts: {info['artifacts']}/  (everything the check writes goes here)")
+    out(f"  report:    {info['report']}  (the verifier writes this)")
+    out("NEXT: hand ONLY the packet path to a FRESH agent; it may run in parallel with the review. Then: "
+        f"atw accept-verify --report {info['report']}")
+    return 0
+
+
+def cmd_accept_verify(root: Path, cfg: dict, args) -> int:
+    run = _select(root, args)
+    res = packets.accept_verify(root, cfg, run, root / args.report, args.user_approved)
+    out(f"{_ref(run)}: verify passed - {res['reason']}")
     return 0
 
 
@@ -415,6 +455,24 @@ def cmd_import_jira(root: Path, cfg: dict, args) -> int:
     return 0
 
 
+def cmd_new_ticket(root: Path, cfg: dict, args) -> int:
+    from atwlib import tickets
+    try:
+        body = Path(args.body_file).read_text(encoding="utf-8")
+    except OSError as e:
+        raise state.RunError(f"cannot read body file: {e}")
+    try:
+        ticket_id, rel_path = tickets.create(root, cfg, args.title, body, dry_run=args.dry_run)
+    except tickets.NewTicketError as e:
+        raise state.RunError(str(e))
+    if args.dry_run:
+        out(f"would create {ticket_id} at {rel_path} (dry run, nothing written)")
+        return 0
+    out(f"created {ticket_id} at {rel_path}")
+    out(f"NEXT: classify the kind with the user, then: atw start {ticket_id} --kind <kind>")
+    return 0
+
+
 # --------------------------------------------------------------------------- setup side
 
 def cmd_hook(root: Path, cfg: dict, args) -> int:
@@ -505,6 +563,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--report", required=True)
     s.add_argument("--override", help="open Warning items the user accepts")
     s.add_argument("--user-approved", help="the user's approval, in their words")
+    add("verify-packet", cmd_verify_packet, help="write a realistic-verification packet (big code runs)")
+    s = add("accept-verify", cmd_accept_verify, help="accept a realistic-verification report")
+    s.add_argument("--report", required=True)
+    s.add_argument("--user-approved", help="the user's words accepting criteria that were not run for real")
     add("simplify-packet", cmd_simplify_packet, help="write a simplify packet (code)")
     s = add("accept-simplify", cmd_accept_simplify, help="accept a simplify report")
     s.add_argument("--report", required=True)
@@ -524,8 +586,14 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--issue-file", required=True, help='JSON: {"key", "summary", "description"}')
     s.add_argument("--notes-file", help="the ticket owner's own notes, used as given")
 
+    s = add("new-ticket", cmd_new_ticket, select=False,
+            help="create a local ticket from an approved draft (written once, never overwritten)")
+    s.add_argument("--title", required=True)
+    s.add_argument("--body-file", required=True, help="the approved ticket body (markdown), from ## Problem / goal on")
+    s.add_argument("--dry-run", action="store_true", help="print the id and path, write nothing")
+
     s = add("hook", cmd_hook, select=False, help="Claude Code hook entry (stdin payload)")
-    s.add_argument("name", choices=("stop", "planmode", "guard"))
+    s.add_argument("name", choices=("stop", "planmode", "planproposed", "guard"))
     s = add("detect", cmd_detect, select=False, help="read-only brownfield discovery")
     s.add_argument("--json", action="store_true")
     s.add_argument("--names", help="comma-separated skill names to check for clashes")

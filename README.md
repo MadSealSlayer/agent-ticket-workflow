@@ -27,13 +27,20 @@ Read [docs/workflow.md](docs/workflow.md) for the reasoning behind it.
   Atlassian MCP connector.
 - **Host adapters.**
   - Claude Code: a Stop hook that blocks the turn while a gate is unmet (from cached results,
-    so a turn end never waits on the test suite), a plan-mode marker and a guard.
+    so a turn end never waits on the test suite), a plan-mode marker and a guard. Parallel
+    sessions on one branch (for example T3 Code threads) are kept apart: a session is gated only
+    by its own ticket. In T3 Code the plan is approved with an `Approve` / `Decline` question
+    (ExitPlanMode is captured there), and the review can run on another model (`audit.route`).
   - Codex and other agents: an `AGENTS.md` block. The agent runs `atw status` before it ends a
     turn.
+- **A realistic check for big changes** (`verify`). A fresh agent runs the change for real, with
+  the project's own e2e, browser or integration check, in parallel with the review. Setup finds
+  the check the project already has and keeps it.
 - **A setup skill** (`/ticket-setup`). It looks at what your project already has, asks you about
   everything that matters, shows the exact changes, and writes nothing before you approve.
-- **Stack presets**: pytest, vitest, jest, go test, ruff, eslint, and pip / npm dependency checks.
-  You can configure any other command, as long as the test runner writes JUnit XML.
+- **Stack presets**: pytest, vitest, jest, Karma (Angular), go test, ruff, eslint, `tsc --noEmit`
+  as a typecheck gate, and pip / npm dependency checks. You can configure any other command, as
+  long as the test runner writes JUnit XML.
 
 ## Install
 
@@ -82,7 +89,12 @@ earlier answers and asks only about what changed.
 ```text
 /ticket T-123            Claude Code
 $ticket T-123            Codex
+/ticket new              no ticket yet: make one from the conversation
 ```
+
+With `new`, the agent drafts a ticket from what you agreed in the conversation and shows it.
+After your yes, `atw new-ticket` writes it once, with the next free number, and the normal flow
+starts on it.
 
 The agent classifies the ticket and confirms the kind with you when it is unclear. Then it
 follows the gates. When it gets stuck, `atw status` names the next step:

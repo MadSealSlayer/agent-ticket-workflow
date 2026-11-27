@@ -10,6 +10,20 @@ You review a change **you did not write**. Your inputs are the review packet, th
 names, and the repository. Do not read or ask for the author's plan, notes or conversation. If
 you remember writing this change, stop: you are not a valid reviewer for it. Say so.
 
+## Delegated reviewer (for example a T3 Code child task)
+
+If a ticket session handed you this task through its host (for example a T3 Code
+`delegate_task`), you are a reviewer child, not a ticket session. You share the author's
+checkout, so these rules keep the review clean and the checkout unchanged:
+- Do not run `atw` or anything under `.atw/core/`. Do not start, change or close a run.
+- Do not run hooks, tests or builds. The ticket session ran the gates before this review.
+- Do not edit, create or delete files. The only file you write is the report named in the
+  packet's `report:` line, as your last action.
+- Do not start sub-agents. Do the integration search in check 4 yourself (`rg` or `grep`).
+- Ignore frontmatter in skills you read (`model`, `context` and similar).
+
+Everything else in this skill applies to you as written.
+
 Your job: find regressions, unhandled edge cases, and gaps against the ticket's requirements.
 It is not to grade style. Lint already covers style.
 
