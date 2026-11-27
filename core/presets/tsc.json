@@ -1,0 +1,27 @@
+{
+  "name": "tsc",
+  "area": "lint",
+  "stack": "node",
+  "requires": [
+    "typescript"
+  ],
+  "detect": {
+    "files": [
+      "tsconfig.json"
+    ]
+  },
+  "commands": {
+    "lint": {
+      "run": "node .atw/core/presets/tsc/tsc-gate.cjs --project tsconfig.json {files}",
+      "output": "exit-code",
+      "file_globs": [
+        "*.ts",
+        "*.tsx",
+        "*.mts",
+        "*.cts"
+      ],
+      "changed_lines_only": false
+    }
+  },
+  "notes": "Typecheck as lint: `tsc --noEmit -p tsconfig.json` over the whole project, when a TypeScript file changed. It fails on every type error, also on unchanged lines, so the project must typecheck cleanly at the start. Point --project at the tsconfig that covers the specs (for Angular, often the root tsconfig.json with references, or tsconfig.spec.json)."
+}

@@ -40,6 +40,15 @@ needed heavy human steering. Recommend it only for a user who wants to try it.
 **A3. Where do tickets live?** → `tickets.globs` (patterns with `{id}`). Evidence: `ticket_dirs`
 and their example file names. If none exist, propose `tickets/{id}.md`.
 
+**A4. Where do tickets made from the conversation go?** → `tickets.new` (`path`, `id_format`,
+`range_size`). `atw new-ticket` writes a ticket that the agent drafted from the conversation,
+after the user approved it, with the next free number. `path` and `id_format` are templates:
+`{n}` is the number, `{id}` the formatted id, `{lo}`/`{hi}` the range of `range_size` numbers
+that holds it. Propose a path that matches the existing ticket files, for example
+`tickets/ticket-{id}.md` (default), `tickets/{lo}-{hi}/ticket-{id}.md` for range folders, or
+`local_tickets/{lo:03d}-{hi:03d}/ticket-{id}.md`. The path must be found by `tickets.globs`;
+check it with `atw new-ticket --title x --body-file <a valid body> --dry-run` after apply.
+
 ## B. What counts as code
 
 **B1. Protected source paths.** → `protected_paths`. Non-code tickets fail the `nocode` gate if
@@ -59,8 +68,12 @@ the plan).
 **C1. Proof and test commands.** → `commands.proof`, `commands.tests`. Show the matched preset
 and the evidence (CI step, interpreter). Explain that the proof command runs exact test ids and
 must write JUnit XML. If no preset fits, ask the user for a command that does, and test it.
-If it needs a small wrapper script (for example, a test runner with no JUnit reporter or no
-single-test filter), put it in `.atw/local/` in local mode. In commit mode, put it in the
+For Angular with Karma, use the `karma` preset: it ships its own wrapper in
+`.atw/core/presets/karma/` and adds no dependency. Tell the user its two limits (from the
+preset's `notes`), and show the mapping: before apply, run
+`node .atw/staging/core/presets/karma/karma-run.cjs --dry-run <one spec file>`. If another runner
+needs a small wrapper script (for example, no JUnit reporter or no single-test filter), put it
+in `.atw/local/` in local mode. In commit mode, put it in the
 project's own scripts folder. Never add dependencies to tracked manifests without asking.
 
 **C2. Which tests run for the `tests` gate?** → `commands.tests.scope`:
@@ -70,6 +83,9 @@ is fast). The proof set always runs in addition.
 
 **C3. Lint.** → `commands.lint` (or none). Only findings on changed lines fail. Ask whether lint
 should be a gate at all.
+For TypeScript projects without a linter gate, the `tsc` preset runs `tsc --noEmit` as the lint
+gate (exit code; every type error fails, also on unchanged lines). Confirm first that the project
+typechecks cleanly today, and which tsconfig covers the specs.
 
 **C4. Dependency declarations.** → `commands.deps` (`python-imports`, `node-imports`, a custom
 command, or none). For shared code packaged into several deployables, ask which manifests must
@@ -78,15 +94,54 @@ also declare its imports → `deps.python_extra_requirements`.
 **C5. Simplify pass.** → `simplify`: `off`, `advisory` (packet available, not required) or
 `gate` (required before review). Recommend `off` or `advisory` to start.
 
+**C6. Review route** (only if Claude Code is a host). → `audit.route`, `audit.t3`.
+`agent` (default): a fresh Claude sub-agent reviews. `t3-delegate`: when the session runs inside
+T3 Code, the review and simplify rounds go to a T3 child task on another model
+(`audit.t3.provider`, `audit.t3.model`, `audit.t3.reasoning_effort`, default `codex`,
+`gpt-6.2-sol`, `medium`). Outside T3, or when the child cannot run, it falls back to `agent`.
+Recommend `agent`, unless the user works in T3 Code and has access to the other provider.
+
+**C7. Realistic verification.** → `verify.how`, `verify.when`, `verify.ignore`. Unit tests and
+the static review never run the app. For big code changes (coordinated, or at least
+`verify.min_planned_files` planned files or `verify.min_proof_ids` proof tests; both 8 by
+default) the `verify` gate has a fresh agent run the change for real, in parallel with the
+review. Show what discovery found: the `workflow:realistic verification` hit (a skill or
+instruction text that starts a dev server, drives a browser, runs e2e or integration tests),
+`playwright.config.*`, `cypress.config.*`, an `e2e/` folder, `e2e` or `test:e2e` scripts.
+- If the project has such a check, **it goes into `verify.how`**: one or two lines that say how
+  to run it, for example "follow `.claude/skills/<name>/SKILL.md`" or "`npm run e2e`". Never let
+  the review replace it.
+- If it has none, ask for a short manual checklist, or leave `how` empty: big tickets then need
+  the user to accept "not run" items at close.
+- `verify.ignore`: paths the check writes into the project that git does not ignore (screenshots,
+  `test-results/`, logs), so they do not count as the change.
+- `when`: `big` (default, recommended), `always`, or `off`. `off` is the user's explicit choice,
+  with their reason in the decisions.
+
 ## D. Extras
 
 **D1. Project-context index.** → `context.enabled`, `context.index`, plan `context_index`.
 If an index exists, propose using it. Otherwise ask whether to create one from the template.
 When enabled, closing a code ticket needs `--context updated|no-op`.
 
-**D2. Guard rules.** → `guards.deny`, `guards.ask`, `guards.protect_before_plan`. Show the
-defaults (deny history rewrites and force pushes; ask before any push). Compare them with
-existing permission rules in `.claude/settings.json`. Ask whether to keep, edit or turn off.
+**D2. Guard rules.** → `guards.git`, `guards.git_add_data`, `guards.test_delete`,
+`guards.deny`, `guards.ask`, `guards.protect_before_plan`, `guards.test_markers`. The guard
+parses each command first, so text that only mentions git (`echo "git push"`, a grep pattern, a
+heredoc body) never matches. Show the `guards.git` defaults: deny `reset-hard`, `push-force`,
+`rebase`, `clean-force`, `commit-amend`; ask `push`. Other rules: `commit`, `push-delete`,
+`filter-branch`, `update-ref-delete`, `reflog-expire`. Ask about the team's commit policy. If
+agents must never commit or push, propose `"deny": [the five defaults, "commit", "push"]` with
+`"ask": []` (a project `ask` list replaces the default one). Compare with the existing permission
+rules in `.claude/settings.json`, and with any git hook that already blocks commits. Ask whether
+to keep, edit or turn off. `git_add_data` (default on) asks before `git add` stages data,
+binary or very large files; `test_delete` (default on) asks before a shell command deletes a
+test file. Use `guards.deny`/`guards.ask` (regexes, default `[]`) only for project-specific
+commands such as `npm publish`; they match the text of each command, quoted text included. If
+the project's config already has the old git regexes in `guards.deny`/`guards.ask`, propose the
+`guards.git` block that `atw doctor` prints instead. `test_markers` (Claude Code only): an edit to a test file that adds a
+skip or focus marker (`xit(`, `fit(`, `it.skip(`, `describe.only(`, `@pytest.mark.skip`,
+`pytest.skip(`, ...) asks the user first. Recommend the defaults; add the project's own markers
+if it uses another runner; `[]` turns it off.
 
 **D3. STE writing check (advisory).** → install the `ste-writing` skill or not; `ste.enabled`.
 

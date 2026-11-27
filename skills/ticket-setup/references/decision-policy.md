@@ -52,5 +52,11 @@ job:
   user cares about.
 - Do not push for the defaults. A setup with fewer touchpoints, chosen by the user, is a good
   result.
+- **Never drop a check the project already runs.** Every existing way of checking a change
+  (tests, typecheck, review, running the app for real) maps to a gate or stays where it is. When
+  our workflow replaces a practice for tickets, name each step of it and the gate that covers
+  that step. A step with no matching gate (for example a browser check, which the review does
+  not do) goes into the config (`verify.how`), or stays required next to the workflow. Write
+  that mapping into the sheet.
 - Never edit a user's file to make a check green. `doctor` warnings about choices the user made
   are expected. Explain each one in one line, and leave it.

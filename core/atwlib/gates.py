@@ -7,10 +7,14 @@ Two styles, as in the original harness:
             reused while it matches. The Stop hook never runs them itself,
             so a turn end never waits on a test suite.
   RECORDED  written by a CLI command after a real check, then re-validated:
-            plan   (plan-mode stamp or approved plan file; stale if the plan copy changes)
+            plan   (plan approval stamp, by ExitPlanMode or by an Approve answer in T3
+                    Code, or an approved plan file; stale if the plan copy changes)
             red    (the proof set failed on behavior; `tests` re-proves it green)
             simplify (an accepted simplify report bound to a packet)
             audit  (an accepted review report; stale once the diff changes)
+            verify (an accepted realistic-verification report; required for big
+                    code runs, runs next to the review, and goes stale after
+                    `verify.recheck_after_rounds` more review rounds)
 
 A gate that verifies nothing is worse than none: every check here reads the
 repo, a command result, or a hash, never the agent's say-so.
@@ -26,7 +30,7 @@ from . import deps as deps_mod
 from . import junit, runner, util
 
 LIVE = ("nocode", "placement", "provenance", "tests", "lint", "deps")
-RECORDED = ("plan", "red", "simplify", "audit")
+RECORDED = ("plan", "red", "simplify", "audit", "verify")
 CACHED = ("tests", "lint", "deps")  # too slow to rerun on every Stop event
 NONCODE_KINDS = ("investigation", "comms", "docs", "tooling")
 RELEASE_VALVE = 3
@@ -36,13 +40,26 @@ def _cmd(cfg: dict, name: str) -> dict | None:
     return (cfg.get("commands") or {}).get(name) or None
 
 
+def verify_required(run: dict, cfg: dict) -> bool:
+    """A code run needs a realistic check when it is big: coordinated, or
+    its plan or proof set reaches the configured size. Read from the run, so
+    the requirement can appear after `plan` or `red`."""
+    v = cfg.get("verify") or {}
+    if run.get("kind") != "code" or v.get("when") == "off":
+        return False
+    return (v.get("when") == "always" or run.get("scope") == "coordinated"
+            or len(run.get("planned_files") or []) >= v.get("min_planned_files", 8)
+            or len(run.get("proof_ids") or []) >= v.get("min_proof_ids", 8))
+
+
 def required_gates(run: dict, cfg: dict) -> list[str]:
     kind = run.get("kind")
     lint = ["lint"] if _cmd(cfg, "lint") else []
     deps = ["deps"] if _cmd(cfg, "deps") else []
     if kind == "code":
         simplify = ["simplify"] if cfg.get("simplify") == "gate" else []
-        return ["plan", "red", "tests", *lint, *deps, *simplify, "audit"]
+        verify = ["verify"] if verify_required(run, cfg) else []
+        return ["plan", "red", "tests", *lint, *deps, *simplify, "audit", *verify]
     if kind == "tooling":
         return ["nocode", "placement", *lint, *deps]
     if kind in ("investigation", "docs"):
@@ -165,10 +182,13 @@ def eval_provenance(root: Path, cfg: dict, run: dict) -> dict:
 
 # --------------------------------------------------------------------------- tests
 
+DEFAULT_TEST_GLOBS = ["test_*.py", "*_test.py", "*.test.*", "*.spec.*", "*_test.go"]
+
+
 def _related_tests(root: Path, cfg: dict, changed: list[str]) -> list[str]:
     tests = _cmd(cfg, "tests") or {}
     scope = tests.get("scope", "all")
-    test_globs = tests.get("test_globs") or ["test_*.py", "*_test.py", "*.test.*", "*.spec.*", "*_test.go"]
+    test_globs = tests.get("test_globs") or DEFAULT_TEST_GLOBS
     direct = [f for f in changed if util.glob_match(f, test_globs) and (root / f).is_file()]
     if scope == "changed-tests":
         return sorted(direct)
@@ -333,7 +353,10 @@ def gate_fingerprint(root: Path, cfg: dict, run: dict) -> str:
         "commands": cfg.get("commands"),
         "python": cfg.get("python"),
     }, sort_keys=True, default=str).encode("utf-8"))
+    ignore = (cfg.get("verify") or {}).get("ignore") or []
     for f in _changed(root, run):
+        if util.under_any(f, ignore):
+            continue  # written by the realistic check, not part of the change
         h.update(f.encode("utf-8") + b"\0")
         try:
             h.update(hashlib.sha256((root / f).read_bytes()).digest())
@@ -363,8 +386,9 @@ def evaluate_live(root: Path, cfg: dict, run: dict, name: str) -> dict:
 
 def review_exclude(cfg: dict) -> list[str]:
     """Paths whose change does not make a review stale: the workflow's own
-    folder and the project-context index (updated after the review)."""
-    ex = [".atw/"]
+    folder, the project-context index (updated after the review) and what
+    the realistic check writes (`verify.ignore`), so both can run in parallel."""
+    ex = [".atw/", *((cfg.get("verify") or {}).get("ignore") or [])]
     index = (cfg.get("context") or {}).get("index")
     if (cfg.get("context") or {}).get("enabled") and index:
         parent = util.posix(Path(index).parent)
@@ -384,7 +408,8 @@ def eval_recorded(root: Path, cfg: dict, run: dict, name: str) -> dict:
     gate = (run.get("gates") or {}).get(name)
     if not gate or gate.get("state") != "passed":
         hint = {"plan": "not approved yet", "red": "not recorded yet",
-                "simplify": "no accepted simplify report", "audit": "no accepted review report"}[name]
+                "simplify": "no accepted simplify report", "audit": "no accepted review report",
+                "verify": "no accepted verification report"}[name]
         return {"state": "pending", "reason": hint}
     ev = gate.get("evidence") or {}
     if name == "plan" and ev.get("plan_copy"):
@@ -392,6 +417,15 @@ def eval_recorded(root: Path, cfg: dict, run: dict, name: str) -> dict:
             return {"state": "stale", "reason": "the approved plan copy changed after approval - re-approve"}
     if name == "audit" and ev.get("diff_sha") and ev["diff_sha"] != diff_sha(root, cfg, run):
         return {"state": "stale", "reason": "the diff changed after the review - run a new review round"}
+    if name == "verify":
+        # Review rounds made after the check on a changed diff. A round on the
+        # same diff (the review run in parallel) does not count.
+        later = (run.get("review_rounds") or [])[ev.get("review_rounds", 0):]
+        since = sum(1 for r in later if r.get("diff_sha") != ev.get("diff_sha"))
+        limit = (cfg.get("verify") or {}).get("recheck_after_rounds", 2)
+        if since >= limit:
+            return {"state": "stale", "reason": f"{since} review round(s) changed the code after the check - "
+                                                "run the realistic check again"}
     return {"state": "passed", "reason": gate.get("reason") or "recorded"}
 
 
@@ -444,13 +478,18 @@ def record_progress(run: dict) -> None:
 
 
 FIX_HINTS = {
-    "plan": "plan in plan mode (Claude) or write the plan and get approval, then: atw plan --files \"a,b\" ...",
+    "plan": "call EnterPlanMode, then ExitPlanMode (Claude; in T3 Code then ask Approve/Decline with "
+            "AskUserQuestion, header `Plan`), or write the plan and get approval, then: atw plan --files \"a,b\" ...",
+    "plan-proposed": "the plan was proposed but not approved yet - ask the user Approve/Decline with "
+                     "AskUserQuestion (header `Plan`), then: atw plan --files \"a,b\" ...",
     "red": "write proof tests (stub new code first), then: atw red --test \"<id>\" [--test ...]",
     "tests": "atw gate tests",
     "lint": "atw gate lint",
     "deps": "declare the import in its manifest, then: atw gate deps",
     "simplify": "atw simplify-packet, run a fresh simplifier, then: atw accept-simplify --report <path>",
     "audit": "atw review-packet, run the clean-room review in a FRESH agent, then: atw accept-review --report <path>",
+    "verify": "atw verify-packet, run the realistic check in a FRESH agent (in parallel with the review), "
+              "then: atw accept-verify --report <path>",
     "nocode": "revert the protected change, or re-kind: atw kind code --why \"...\"",
     "placement": "write the deliverable where its kind requires (see atw status)",
     "provenance": "add '## Sources' with '- [id] ...' entries; tag claims measured/inferred with an [id]",

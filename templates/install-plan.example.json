@@ -70,22 +70,27 @@
     "audit": {
       "model": "opus"
     },
+    "verify": {
+      "when": "big",
+      "how": "npm run e2e (Playwright against the dev server with a mocked backend)",
+      "min_planned_files": 8,
+      "min_proof_ids": 8,
+      "recheck_after_rounds": 2,
+      "ignore": ["test-results/"]
+    },
     "context": {
       "enabled": false,
       "index": "docs/agent-context/INDEX.md"
     },
     "guards": {
-      "deny": [
-        "\\bgit\\s+reset\\s+--hard\\b",
-        "\\bgit\\s+push\\b[^\\n]*\\s(--force|-f)(\\s|$)",
-        "\\bgit\\s+push\\b[^\\n]*--force-with-lease",
-        "\\bgit\\s+commit\\b[^\\n]*--amend",
-        "\\bgit\\s+clean\\b[^\\n]*\\s-[a-zA-Z]*f",
-        "\\bgit\\s+rebase\\b"
-      ],
-      "ask": [
-        "\\bgit\\s+push\\b"
-      ],
+      "git": {
+        "deny": ["reset-hard", "push-force", "rebase", "clean-force", "commit-amend"],
+        "ask": ["push"]
+      },
+      "git_add_data": true,
+      "test_delete": true,
+      "deny": [],
+      "ask": [],
       "protect_before_plan": true
     },
     "ste": {

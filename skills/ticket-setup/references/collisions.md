@@ -51,6 +51,13 @@ that overlaps), or whether setup should stop. For spec-driven setups (OpenSpec, 
 the planned lightweight mode on the roadmap and ask whether per-ticket plans fit how this team
 works.
 
+**`workflow:realistic verification`: the project already runs changes for real** (a dev server
+and a browser, e2e or integration tests, a smoke test). Options: merge, skip, abort. The review
+reads code; it never replaces this. `merge` (recommend it) puts the check into `verify.how`
+(question C7), so big code tickets run it next to the review. `skip` keeps it outside tickets
+only, and sets `verify.when: "off"`: say plainly that big tickets will then close without being
+run for real, and record the user's reason. Never note it as covered by `ticket-audit`.
+
 **`settings:<file>`: settings file is invalid JSON.** Options: skip, abort. Never repair it
 yourself; the user fixes it, then re-runs setup.
 

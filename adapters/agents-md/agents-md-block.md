@@ -14,8 +14,14 @@ The skill classifies the ticket, plans it with the user, proves red, runs fresh 
 clean-room review and closes with evidence. The state engine is `{{atw}}`.
 
 - Open a run: `{{atw}} start <TICKET> --kind <kind>` (enabled kinds: {{kinds}}).
+- **No ticket yet?** When the user asks to make a ticket from the conversation, draft it (problem,
+  settled decisions, acceptance criteria, out of scope, open questions) and show it. Only after
+  the user's explicit yes, write the body to a file and run
+  `{{atw}} new-ticket --title "<title>" --body-file <path>`. It prints the new ticket id. The
+  ticket file is never edited after that.
 - **Plan (code tickets).**
-  - Claude Code: use plan mode. A hook records the approval.
+  - Claude Code: use plan mode. A hook records the approval. In T3 Code, `ExitPlanMode` returns an
+    error: then ask `AskUserQuestion` (header `Plan`, options `Approve` / `Decline`).
   - Other agents: plan with your host's planning mode and save the plan to
     `{{plan_dir}}/<TICKET>.md`. Ask the user for an explicit yes, then run
     `{{atw}} plan --files "..." --plan-file <path> --approval "<the user's words>"`.
@@ -24,6 +30,9 @@ clean-room review and closes with evidence. The state engine is `{{atw}}`.
     results and never reruns them, so run `{{atw}} gate tests lint deps` after your last edit.
   - Other agents: run `{{atw}} status`. If anything is unmet, keep working. Stop only to ask the
     user a question that is genuinely theirs.
+- **Big code changes are also run for real** (the `verify` gate): integration, browser or
+  end-to-end, as `verify.how` in the config says, in a fresh agent next to the review. A check
+  the project already had is part of this gate, never replaced by the review.
 - Never skip, fake or reorder a gate. A refusal names the next step, so follow it.
 - Ask the user whenever a decision is theirs. Follow the approved plan, and re-plan with the
   user if it stops fitting.

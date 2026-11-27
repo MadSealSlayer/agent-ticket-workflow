@@ -6,11 +6,11 @@ Settled on 2026-10-04 unless noted. To change one, open a pull request with a ne
 |---|---|
 | [0001](0001-one-core-many-adapters.md) | One host-neutral core, thin host adapters |
 | [0002](0002-python-stdlib-core.md) | Python standard library only for the core |
-| [0003](0003-local-markdown-tickets.md) | Version 1 reads tickets from local markdown files (amended by 0014) |
+| [0003](0003-local-markdown-tickets.md) | Version 1 reads tickets from local markdown files (amended by 0014, 0015) |
 | [0004](0004-in-session-setup.md) | Setup runs inside an agent session, with a question sheet |
 | [0005](0005-never-overwrite.md) | Never overwrite what is not ours |
 | [0006](0006-config-commands-and-presets.md) | Gates run configured commands; presets supply defaults |
-| [0007](0007-clean-room-review-packet.md) | Clean-room review through a hashed packet |
+| [0007](0007-clean-room-review-packet.md) | Clean-room review through a hashed packet (amended by 0016) |
 | [0008](0008-local-only-until-published.md) | Local repository, no remote, no commits until the owner is decided (superseded) |
 | [0009](0009-spike-experimental.md) | Spike ships as experimental |
 | [0010](0010-simplify-optional.md) | Simplify is optional |
@@ -18,3 +18,8 @@ Settled on 2026-10-04 unless noted. To change one, open a pull request with a ne
 | [0012](0012-published-mit.md) | Published on GitHub under the MIT license |
 | [0013](0013-cached-gates-stop-hook.md) | The Stop hook reads cached tests/lint/deps results (2026-11-12) |
 | [0014](0014-jira-through-mcp-connector.md) | Jira through the host's MCP connector (2026-11-12) |
+| [0015](0015-ticket-from-conversation.md) | A ticket can be written from the conversation, once (2026-11-24) |
+| [0016](0016-t3-code-review-route.md) | In T3 Code, the review can run on another model through a delegated task (2026-11-24) |
+| [0017](0017-parsed-command-guard.md) | The guard parses commands and has named git rules (2026-11-24) |
+| [0018](0018-t3-plan-approval.md) | In T3 Code, the plan is approved through an AskUserQuestion (2026-11-24) |
+| [0019](0019-realistic-verification-gate.md) | Big code changes are run for real, next to the review (2026-11-27) |

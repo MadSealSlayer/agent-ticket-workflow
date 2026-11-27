@@ -1,7 +1,7 @@
 ---
 name: {{skill.ticket}}
-description: Run a ticket through the gated agent workflow. Classify its kind with the user, plan and get approval, prove red on behavior, pass fresh gates, get a clean-room review, and close with evidence. Invoke as /{{skill.ticket}} <ticket-id | status | abort>.
-argument-hint: <ticket-id | status | abort>
+description: Run a ticket through the gated agent workflow. Classify its kind with the user, plan and get approval, prove red on behavior, pass fresh gates, get a clean-room review, and close with evidence. Invoke as /{{skill.ticket}} <ticket-id | new [title] | status | abort>.
+argument-hint: <ticket-id | new [title] | status | abort>
 disable-model-invocation: true
 ---
 
@@ -13,6 +13,9 @@ is straightforward. **Everything that matters to the user, you ask.**
 
 If the argument is `status` or `abort`, run `{{atw}} status` (or `{{atw}} abort --why "<reason>"`)
 for the open run and stop.
+
+If the argument is `new` (with an optional title), or the user asks you to make a ticket from
+the conversation, start with **Step 0**. With no argument and no open run, offer Step 0.
 
 ## Rules that apply on every step
 
@@ -33,11 +36,48 @@ for the open run and stop.
 - **Commits:** only when the user asks, local only, and only if the project's own rules allow
   it. Never push. Never rewrite history.
 
+## Step 0 - New ticket from the conversation (only for `new`)
+
+The user often has no ticket. You talked, and settled what to change. Now turn that into a
+ticket file, then run the normal flow on it.
+
+1. Draft the ticket from the conversation. The body has these sections, in this order:
+   - `## Problem / goal`: what and why, in the user's terms.
+   - `## Settled decisions`: one bullet per decision the user agreed to, with their reasoning
+     or words. Only what they actually agreed to.
+   - `## Acceptance criteria`: numbered, each one testable. They become the proof set.
+   - `## Out of scope`
+   - `## Open questions`: everything not settled, or `(none)`.
+
+   Never invent a requirement the user did not state or agree to. An unknown goes to Open
+   questions. Write `(none)` under a section that has nothing. Also pick a short title.
+2. Show the full draft (title and body) to the user. Ask for an explicit yes (Claude Code:
+   `AskUserQuestion` with Approve / Edit). **Write nothing before the yes.** On Edit, change the
+   draft and ask again.
+3. After the yes, write the body to a file under `.atw/tmp/` (never put the ticket text on a
+   command line), and run:
+
+   ```
+   {{atw}} new-ticket --title "<title>" --body-file .atw/tmp/new-ticket.md
+   ```
+
+   It takes the next free number, adds the `Source: conversation <date>` line and the title,
+   creates the file once and prints the id. It refuses an empty body, a missing section, or a
+   path that `tickets.globs` would not find. A refusal is a question for the user, not
+   something to work around.
+4. Continue with Step 1 for the printed id. After `start` (Step 4), record each settled
+   decision: `{{atw}} decide --item "<decision>" --verdict settled-question --why "<the user's
+   reasoning>"`, so the reviewer does not raise it again.
+
+From now on the ticket file is read-only, the same as any other ticket. A change of scope is a
+new conversation with the user, not an edit of the file.
+
 ## Step 1 - Read the ticket
 
 Tickets are markdown files found by the patterns in `.atw/atw.config.json` (`tickets.globs`;
 `{id}` is the ticket id). Read the ticket in full. If no file exists, ask the user to save the
-ticket text there, or to give you the path (`--ticket-file`). If the project has `jira.enabled`
+ticket text there, or to give you the path (`--ticket-file`), or offer Step 0 when the
+conversation already settled the work. If the project has `jira.enabled`
 and the ticket is a Jira key with no file yet, offer to import it with the `{{skill.jira}}` skill.
 
 **Jira-linked tickets.** If line 1 starts with `Jira:` and the config has `jira.enabled: true`,
@@ -120,13 +160,31 @@ Docs and tooling go straight to **Close** once their gates pass.
 
 **Claude Code:** your very next tool call after `start` is `EnterPlanMode` (the only exception
 is `AskUserQuestion` for a question that blocks planning itself). Explore, ask the open
-questions, design the change, then `ExitPlanMode` so the user approves it. Then:
+questions, design the change, then `ExitPlanMode` so the user approves it.
+
+**Inside T3 Code** `ExitPlanMode` returns an error ("The client captured your proposed
+plan..."). That is expected: a hook has recorded the proposal. If the result contains "client
+captured your proposed plan", or `T3CODE_THREAD_ID` is set and the result is anything but an
+approval, do not end the turn. Your next tool call is `AskUserQuestion` with exactly one
+question, written exactly like this:
+
+- `header`: `Plan`
+- `question`: `Approve this plan?`
+- `options`: `Approve` (description "Start implementing this plan") and `Decline`
+  (description "Don't implement; tell me what to change"); `multiSelect`: false
+
+Only the answer `Approve` approves the plan. `Decline` or the user's own text means: revise the
+plan with that feedback, then `ExitPlanMode` again, then ask again. A hook turns `Approve` into
+the same approval that `ExitPlanMode` gives natively, so you do not need `--no-plan-mode` in T3.
+
+Then:
 
 ```
 {{atw}} plan --files "path/a,tests/test_a,path/b"
 ```
 
-`plan` refuses unless a real `ExitPlanMode` happened after `start`. A genuine one-liner where a
+`plan` refuses unless the plan was approved after `start` (a real `ExitPlanMode`, or `Approve`
+in T3 Code). A genuine one-liner where a
 plan round-trip is theater (isolated scope only): say so, then
 `{{atw}} plan --files "..." --no-plan-mode --why "<reason>"`. The skip is recorded.
 
@@ -198,8 +256,8 @@ the diff.
 {{atw}} simplify-packet
 ```
 
-Dispatch a **fresh** agent (the same way as the review below) to write the report the packet
-names. Then mark every recommendation `- [x] ... applied` or `- [x] ... declined: <reason>`,
+Dispatch a **fresh** agent (the same way as the review below, including the T3 Code route) to
+write the report the packet names. Then mark every recommendation `- [x] ... applied` or `- [x] ... declined: <reason>`,
 re-run the gates, and run `{{atw}} accept-simplify --report <path>`.
 
 ### 5. Clean-room review
@@ -211,6 +269,8 @@ re-run the gates, and run `{{atw}} accept-simplify --report <path>`.
 The packet holds only the diff, the ticket text and the settled decisions. Hand **only the
 packet path** to a reviewer with no memory of this session:
 
+- **Claude Code in T3 Code**, when the config has `audit.route: "t3-delegate"`: use the T3
+  route below. Otherwise, or when it falls back, use the next item.
 - **Claude Code:** dispatch an `Agent` (general-purpose, model `opus` unless the config says
   otherwise) with this prompt:
   "You are a clean-room reviewer. Read and follow `{{skill_dir}}/{{skill.ticket-audit}}/SKILL.md`
@@ -221,11 +281,79 @@ packet path** to a reviewer with no memory of this session:
 
 Then: `{{atw}} accept-review --report <report path>`.
 
+**T3 Code route** (Claude Code only; also for the simplify packet in Step 4 and the
+verification packet in Step 5b). A reviewer from
+another model family finds problems that the author's model does not see.
+
+1. Check the environment once per session: `echo "$T3CODE_THREAD_ID"` (Bash) or
+   `$env:T3CODE_THREAD_ID` (PowerShell). Empty means you are not in T3 Code: use the `Agent`
+   path.
+2. Read `audit.t3` from `.atw/atw.config.json` (`provider`, `model`, `reasoning_effort`). Call
+   T3 `orchestrator_capabilities` once per session. The provider must list the model, and the
+   model must be able to run a child task. Note the option id it gives for reasoning effort.
+3. Make **one new** `delegate_task` per round. Never send a later round to an earlier child.
+   - `title`: `"Clean-room review of <TICKET> round <n>"`
+   - `role`: `"review"`
+   - `isolation`: `"shared"`. A worktree child starts from the last commit and does not see
+     the uncommitted change.
+   - `mode`: `"async"`
+   - `target`: `providerInstanceId` = `audit.t3.provider`, `model` = `audit.t3.model`,
+     `options` = the reasoning-effort option set to `audit.t3.reasoning_effort`
+   - `task`: "You are a clean-room reviewer. Read and follow
+     `{{skill_dir}}/{{skill.ticket-audit}}/SKILL.md`, including its section for a delegated
+     reviewer, for the packet at `<packet path>`."
+     For a simplify packet: "Follow the simplify packet at `<packet path>`. The rules for a
+     delegated reviewer in `{{skill_dir}}/{{skill.ticket-audit}}/SKILL.md` apply to you."
+
+   Put only the paths in `task`: no diff text, no plan, no secrets.
+4. Wait for the child. Follow the `next` that `delegate_task` returns. Do not poll, and do not
+   edit files while it runs: the packet's diff is what it reviews.
+5. Run `{{atw}} accept-review --report <report path>` as usual. The packet is bound to the
+   diff's hash, so `accept-review` refuses a report when the working tree changed after the
+   packet was made. No other freshness check is needed. (The simplify packet is not bound to the
+   diff hash: re-run the gates after you apply its items, as Step 4 says.)
+
+**Fallback.** If you are not in T3, the model is not available, `delegate_task` fails, the
+child fails, or it ends without the report file: say so in one line and run the same round with
+the Claude `Agent` path above, on the same packet. If a report file was written but
+`accept-review` refuses it as unreadable, make a new packet and use the `Agent` path. Tell the
+user which route each round used.
+
 Open Critical or Warning items fail the gate. Fix them, re-run the gates, and make a new packet.
 Round 2+ packets are delta reviews. Any edit after an accepted review makes it stale, by diff
 hash. A Warning the user explicitly accepts can pass:
 `--override "<item>" --user-approved "<their words>"`. A Critical can never be overridden.
 Pre-existing findings are not this ticket's to fix. Record them with `--verdict pre-existing`.
+
+### 5b. Realistic verification (when `verify` is a required gate)
+
+Unit tests with mocks and a static review do not show that the change works for real. For a big
+change (coordinated, or a plan or proof set over the threshold; `{{atw}} status` lists `verify`
+then), someone must also **run** it: integration, browser or end-to-end, whatever the project
+has (`verify.how` in the config). Start it **in parallel with review round 1**, on the same diff:
+
+```
+{{atw}} verify-packet
+```
+
+Hand only the packet path to a fresh agent, the same way as the review: the T3 route above with
+`title` `"Realistic verification of <TICKET> round <n>"`, `role` `"test"` and the task "Follow
+the verification packet at `<packet path>`."; otherwise the Claude `Agent` (or Codex sub-agent)
+with that prompt. The packet holds the verifier's rules: it runs the app and the project's
+checks, writes only into its own artifacts folder, and never edits the code. Make both packets,
+then dispatch both children before you wait for either. Do not edit files until both are back.
+Then: `{{atw}} accept-verify --report <report path>`.
+
+- **Failed** items block close and can never be accepted away. Fix them like review findings,
+  then make a new verification packet next to the next review round. The fix makes the review
+  stale, which is expected: the next review round is a delta.
+- **Not run** items (the check could not run, or `verify.how` is empty) block close until the
+  user accepts them. If a T3 child reported them only because it lacks a tool the check needs
+  (a browser, an MCP server), first run a new packet once on the Claude `Agent` route.
+  Otherwise ask the user, with the list in front of them, then add
+  `--user-approved "<their words>"`. Never accept them for the user.
+- A small fix after the check does not need a new one. After `verify.recheck_after_rounds` more
+  review rounds on a changed diff, `verify` is stale: run a new verification packet.
 
 ### 6. Update project context
 
@@ -242,6 +370,7 @@ Note the result for close.
 
 `close` re-checks every required gate, refuses if anything is unmet, then appends to the run
 log. The ticket file is never modified. Finish with a short report: what changed, the
-evidence (gates), assumptions you made, follow-ups, and anything you did not do.
+evidence (gates), assumptions you made, follow-ups, and anything you did not do. Say what was
+run for real and what was not.
 
 To abandon a run: `{{atw}} abort --why "<reason>"`. At any time: `{{atw}} status`.

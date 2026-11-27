@@ -1,0 +1,35 @@
+{
+  "name": "karma",
+  "area": "tests",
+  "stack": "node",
+  "requires": [
+    "@angular/cli",
+    "karma",
+    "karma-jasmine",
+    "karma-chrome-launcher"
+  ],
+  "detect": {
+    "files": [
+      "angular.json:build-angular:karma",
+      "angular.json:@angular/build:karma"
+    ]
+  },
+  "commands": {
+    "proof": {
+      "run": "node .atw/core/presets/karma/karma-run.cjs --junit {junit} {id_files}",
+      "id_style": "name"
+    },
+    "tests": {
+      "run": "node .atw/core/presets/karma/karma-run.cjs {files}",
+      "scope": "stem-match",
+      "test_globs": [
+        "*.spec.ts"
+      ],
+      "source_globs": [
+        "*.ts",
+        "*.html"
+      ]
+    }
+  },
+  "notes": "Angular with Karma. The wrapper maps each spec file to its angular.json project and runs `ng test <project> --include <spec>` with an inline JUnit reporter; it adds no npm dependency. Proof ids: path/to/x.spec.ts::describe title it title. Limits: (1) Karma does not report a test's file, so the file is found by the top-level describe title (two files with the same title can be confused); (2) a spec that no project's tsconfig.spec.json includes never runs - it is skipped with a warning, so cover that code from an included spec. Run `node .atw/core/presets/karma/karma-run.cjs --dry-run <spec>` to see the mapping."
+}

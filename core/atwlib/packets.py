@@ -20,6 +20,17 @@ Report format (markdown), checked by `parse_report`:
     ## Nit
 Both Critical and Warning headings must be present, even when empty, so an
 empty report can never be mistaken for a clean one.
+
+The verification packet (`verify` gate) is bound the same way, but its agent
+RUNS the change (integration, browser, end-to-end) instead of reading it:
+    packet: <packet id>
+    verifier: <id, different from the implementer>
+    ## Checked                     - [x] <criterion> - how: <what ran, what was seen>
+    ## Failed - blocks close       - [ ] <criterion> - <what happened instead>
+    ## Not run                     - [ ] <criterion> - why: <reason>
+Open Failed items block. Open Not-run items block unless the user accepts
+them in their own words. The verifier writes only into its own folder, so
+the review of the same diff can run at the same time.
 """
 from __future__ import annotations
 
@@ -32,7 +43,7 @@ from . import gates, state, util
 _SECTION = re.compile(r"^#{2,6}\s+(.*)$", re.MULTILINE)
 _OPEN = re.compile(r"^\s*-\s*\[\s\]\s*(.*)$", re.MULTILINE)
 _DONE = re.compile(r"^\s*-\s*\[[xX]\]", re.MULTILINE)
-_FIELD = re.compile(r"^\s*(packet|reviewer|agent)\s*:\s*(\S+)\s*$", re.MULTILINE | re.IGNORECASE)
+_FIELD = re.compile(r"^\s*(packet|reviewer|agent|verifier)\s*:\s*(\S+)\s*$", re.MULTILINE | re.IGNORECASE)
 
 
 def fields(text: str) -> dict:
@@ -40,11 +51,7 @@ def fields(text: str) -> dict:
 
 
 def parse_report(text: str) -> dict:
-    sections = {}
-    matches = list(_SECTION.finditer(text))
-    for i, m in enumerate(matches):
-        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
-        sections[m.group(1).strip().lower()] = text[m.end():end]
+    sections = _sections(text)
 
     def find(label):
         for title, body in sections.items():
@@ -83,15 +90,28 @@ def _decisions_md(run: dict) -> str:
 
 # --------------------------------------------------------------------------- review
 
-def review_packet(root: Path, cfg: dict, run: dict) -> dict:
-    if run.get("kind") != "code":
-        raise state.RunError("a clean-room review applies to code runs only")
+def _require_gates_before_review(root: Path, cfg: dict, run: dict, what: str) -> None:
     report = gates.evaluate_required(root, cfg, run)
     blocking = [n for n in ("plan", "red", "tests", "lint", "deps", "simplify")
                 if n in report and report[n]["state"] != "passed"]
     if blocking:
-        raise state.RunError("review refused - these gates must pass first: "
+        raise state.RunError(f"{what} refused - these gates must pass first: "
                              + "; ".join(f"{n} ({report[n]['reason']})" for n in blocking))
+
+
+def _sections(text: str) -> dict:
+    out = {}
+    matches = list(_SECTION.finditer(text))
+    for i, m in enumerate(matches):
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        out[m.group(1).strip().lower()] = text[m.end():end]
+    return out
+
+
+def review_packet(root: Path, cfg: dict, run: dict) -> dict:
+    if run.get("kind") != "code":
+        raise state.RunError("a clean-room review applies to code runs only")
+    _require_gates_before_review(root, cfg, run, "review")
     rounds = run.setdefault("review_rounds", [])
     n = len(rounds) + 1
     d = _dir(root, run, "reviews")
@@ -261,3 +281,139 @@ def accept_simplify(root: Path, run: dict, report_path: Path) -> dict:
         "evidence": {"report": util.rel(root, report_path), "packet_id": rnd["packet_id"], "agent": f["agent"]}}
     state.save(root, run)
     return run["gates"]["simplify"]
+
+
+# --------------------------------------------------------------------------- verify
+
+NO_CHECK = ("_No realistic check is configured for this project._ Look for one the repository already "
+            "has (a skill, an e2e or integration script, a documented way to run the app) and use it. If "
+            "there is none, or it cannot run here, put every criterion under `## Not run` with the reason. "
+            "The user decides whether that is acceptable.")
+
+
+def verify_packet(root: Path, cfg: dict, run: dict) -> dict:
+    if run.get("kind") != "code":
+        raise state.RunError("realistic verification applies to code runs only")
+    _require_gates_before_review(root, cfg, run, "verification")
+    rounds = run.setdefault("verify_rounds", [])
+    n = len(rounds) + 1
+    d = _dir(root, run, "verify")
+    out_dir = util.rel(root, _dir(root, run, f"verify/verify-{n}"))
+    sha = gates.diff_sha(root, cfg, run)
+    packet_id = uuid.uuid4().hex[:12]
+    packet_path = d / f"verify-{n}.packet.md"
+    report_path = util.rel(root, d / f"verify-{n}.report.md")
+    how = ((cfg.get("verify") or {}).get("how") or "").strip() or NO_CHECK
+    packet_path.write_text(f"""packet: {packet_id}
+ticket: {run['ticket']}
+run: {run['run_id']}
+round: {n}
+implementer: {run.get('actor')}
+diff_sha256: {sha}
+artifacts: {out_dir}
+report: {report_path}
+
+# Realistic verification packet
+
+Unit tests and a static review cover this change already. Your job is different: run the changed
+behavior **for real**, the way a user or a calling system meets it (integration, browser,
+end-to-end, whatever this project has), and report what you saw for each acceptance criterion.
+You did not write this change. Do not read or ask for the author's plan or reasoning.
+
+## How this project checks a change for real
+
+{how}
+
+## Rules
+
+- You share the author's checkout. Do not edit, create or delete project files, and never change
+  the code to make a check pass: report the failure instead.
+- Write screenshots, traces, logs and any other output only under `{out_dir}/`. A file left
+  anywhere else changes the diff and invalidates the code review that runs at the same time.
+- Do not run `atw` or anything under `.atw/core/`. Do not start sub-agents.
+- Stop every server and browser you start before you finish.
+- Never copy secrets, tokens or credentials into the report.
+
+## Requirements (ticket, verbatim)
+
+{_ticket_text(root, run)}
+
+## Report
+
+Every acceptance criterion gets exactly one line, in one of the three sections below. Write
+`{report_path}` as your last action. Its first lines must be:
+
+    packet: {packet_id}
+    verifier: <your id - not "{run.get('actor')}">
+
+then these three headings, kept even when empty:
+
+    ## Checked
+    - [x] <criterion> - how: <what you ran and what you saw; name the artifact file>
+    ## Failed - blocks close
+    - [ ] <criterion> - <what happened instead>
+    ## Not run
+    - [ ] <criterion> - why: <why it could not be checked for real>
+""", encoding="utf-8", newline="\n")
+    rounds.append({"round": n, "packet_id": packet_id, "diff_sha": sha, "created_at": util.now_iso(),
+                   "review_rounds": len(run.get("review_rounds") or []),
+                   "packet": util.rel(root, packet_path), "report": report_path})
+    state.save(root, run)
+    return {"round": n, "packet_id": packet_id, "packet": util.rel(root, packet_path),
+            "report": report_path, "artifacts": out_dir}
+
+
+def accept_verify(root: Path, cfg: dict, run: dict, report_path: Path, user_approval: str | None = None) -> dict:
+    if not report_path.is_file():
+        raise state.RunError(f"report not found: {report_path}")
+    text = report_path.read_text(encoding="utf-8", errors="replace")
+    f = fields(text)
+    rnd = next((r for r in run.get("verify_rounds") or [] if r["packet_id"] == f.get("packet")), None)
+    if not rnd:
+        raise state.RunError("the report's `packet:` line does not match any verification packet of this run")
+    verifier = f.get("verifier")
+    if not verifier or verifier == run.get("actor"):
+        raise state.RunError("the report needs a `verifier:` line naming an agent other than the implementer")
+    sections = _sections(text)
+
+    def section(label):
+        return next((body for title, body in sections.items() if title.startswith(label)), None)
+
+    checked, failed, not_run = section("checked"), section("failed"), section("not run")
+    if checked is None or failed is None or not_run is None:
+        raise state.RunError("the report must keep the `## Checked`, `## Failed - blocks close` and `## Not run` "
+                             "headings - an unreadable report is never treated as clean")
+    if rnd["diff_sha"] != gates.diff_sha(root, cfg, run):
+        raise state.RunError("the diff changed after this verification packet was made - "
+                             "run `atw verify-packet` again")
+    failed_open = [i.strip() for i in _OPEN.findall(failed)]
+    not_run_open = [i.strip() for i in _OPEN.findall(not_run)]
+    n_checked = len(_DONE.findall(checked))
+    evidence = {"report": util.rel(root, report_path), "packet_id": rnd["packet_id"], "round": rnd["round"],
+                "verifier": verifier, "diff_sha": rnd["diff_sha"], "review_rounds": rnd["review_rounds"],
+                "checked": n_checked}
+    unrun = bool(not_run_open) or not n_checked
+
+    def refuse(reason: str, message: str):
+        run.setdefault("gates", {})["verify"] = {"state": "failed", "by": "script", "ts": util.now_iso(),
+                                                 "reason": reason, "evidence": evidence}
+        state.save(root, run)
+        raise state.RunError(message)
+
+    if failed_open:
+        refuse(f"{len(failed_open)} criterion line(s) failed",
+               "the realistic check failed - fix it, then make a new packet:\n  " + "\n  ".join(failed_open))
+    if unrun and not user_approval:
+        refuse("not run for real", "nothing or not everything was run for real. Ask the user; if they accept "
+               "it, re-run with --user-approved \"<their words>\":\n  "
+               + "\n  ".join(not_run_open or ["(no line under ## Checked)"]))
+    reason = f"realistic check round {rnd['round']}: {n_checked} criterion line(s) checked"
+    if unrun:
+        reason += f", {len(not_run_open)} not run (accepted by the user)"
+        evidence.update(not_run=not_run_open, user_approval=user_approval)
+        state.append_decision(run, "not run for real: " + "; ".join(not_run_open or ["(nothing checked)"]),
+                              "accepted-tradeoff", f"user approved: {user_approval}")
+    run.setdefault("gates", {})["verify"] = {"state": "passed", "by": "script", "ts": util.now_iso(),
+                                             "reason": reason, "evidence": evidence}
+    state.save(root, run)
+    return {"reason": reason, **evidence}

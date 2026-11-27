@@ -6,8 +6,11 @@ Layout under `.atw/runs/` (gitignored):
   <ticket>/<run-id>/simplify/          simplify packets and reports
   <ticket>/<run-id>/plan.md            copy of the approved plan (non-Claude hosts)
   sessions/<session>.txt               Claude session -> ticket binding
-  planmode/ticket-<ticket>.txt         ExitPlanMode stamp for a bound session
-  planmode/branch-<branch>.txt         ExitPlanMode stamp, branch fallback
+  planmode/ticket-<ticket>.txt         plan approval stamp for a bound session
+  planmode/branch-<branch>.txt         plan approval stamp, branch fallback
+  planmode/<key>.json                  how that approval came (route, answer, notes)
+  planmode/proposed-<key>.txt          a plan was proposed (PreToolUse ExitPlanMode)
+  planmode/declined-<key>.json         the last Decline or free-text answer to a proposal
   log.md                               one line per closed or aborted run
 
 Several runs can be open at once (parallel sessions, one branch or many).
@@ -213,27 +216,142 @@ def planmode_branch_path(root: Path, branch: str) -> Path:
     return runs_dir(root) / "planmode" / f"branch-{util.slug(branch)}.txt"
 
 
-def planmode_epoch(root: Path, ticket: str, branch: str) -> float | None:
-    """Last real ExitPlanMode for this ticket's session, else for the branch."""
-    for p in (planmode_ticket_path(root, ticket), planmode_branch_path(root, branch)):
-        try:
-            value = util.epoch_of_iso(p.read_text(encoding="utf-8"))
-        except Exception:
-            value = None
-        if value is not None:
-            return value
+def planmode_key_path(root: Path, key: str) -> Path:
+    """The approval stamp for a key from `planmode_key` ("ticket-X" / "branch-Y")."""
+    return runs_dir(root) / "planmode" / f"{key}.txt"
+
+
+def planmode_route_path(stamp: Path) -> Path:
+    return stamp.with_suffix(".json")
+
+
+def proposed_path(root: Path, key: str) -> Path:
+    return runs_dir(root) / "planmode" / f"proposed-{key}.txt"
+
+
+def declined_path(root: Path, key: str) -> Path:
+    return runs_dir(root) / "planmode" / f"declined-{key}.json"
+
+
+def planmode_key(root: Path, session_id: str | None) -> str | None:
+    """Which plan stamps a hook of this session reads and writes, or None.
+
+    A bound session uses its own ticket's stamps only: its plan mode must
+    never pass the plan gate of a run that it does not drive. An unbound
+    session uses the branch's stamps, and only when the branch has an open
+    run that no session drives (`run_for_hook`)."""
+    ticket = session_ticket(root, session_id)
+    if ticket:
+        return f"ticket-{util.slug(ticket)}"
+    if run_for_hook(root, session_id):
+        return f"branch-{util.slug(util.current_branch(root))}"
     return None
 
 
+def _stamp_epoch(path: Path) -> float | None:
+    try:
+        return util.epoch_of_iso(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def write_approval(root: Path, key: str, route: str, **detail) -> None:
+    """The approval stamp `atw plan` checks, plus a record of its route
+    (`exit-plan-mode` or `ask-approve`). The record names the stamp it
+    belongs to, so an older record is never read as the route of a newer stamp."""
+    stamp = util.now_iso()
+    path = planmode_key_path(root, key)
+    util.write_json(planmode_route_path(path), {"route": route, "stamp": stamp, **detail})
+    util.atomic_write_text(path, stamp)
+
+
+def planmode_approval(root: Path, ticket: str, branch: str) -> tuple[float | None, dict]:
+    """(epoch, route record) of the last plan approval for this ticket's
+    session, else for the branch. A stamp without a matching record is an
+    ExitPlanMode stamp from before routes were recorded."""
+    for p in (planmode_ticket_path(root, ticket), planmode_branch_path(root, branch)):
+        value = _stamp_epoch(p)
+        if value is None:
+            continue
+        record = util.read_json(planmode_route_path(p), default=None)
+        try:
+            text = p.read_text(encoding="utf-8").strip()
+        except Exception:
+            text = None
+        if not isinstance(record, dict) or record.get("stamp") != text:
+            record = {"route": "exit-plan-mode"}
+        return value, record
+    return None, {}
+
+
+def planmode_epoch(root: Path, ticket: str, branch: str) -> float | None:
+    """Last real plan approval for this ticket's session, else for the branch."""
+    return planmode_approval(root, ticket, branch)[0]
+
+
+def pending_proposal(root: Path, key: str, run: dict) -> float | None:
+    """The epoch of a plan proposal that waits for the user's answer: made
+    after the run started, and after the last approval and the last decline
+    for this key. A proposal is consumed by either answer."""
+    proposed = _stamp_epoch(proposed_path(root, key))
+    if proposed is None or proposed < (run.get("started_at_epoch") or 0):
+        return None
+    approved = _stamp_epoch(planmode_key_path(root, key))
+    if approved is not None and approved >= proposed:
+        return None
+    declined = util.read_json(declined_path(root, key), default=None)
+    declined_at = util.epoch_of_iso(str(declined.get("ts", ""))) if isinstance(declined, dict) else None
+    if declined_at is not None and declined_at >= proposed:
+        return None
+    return proposed
+
+
+def clear_session(root: Path, session_id: str) -> None:
+    try:
+        session_path(root, session_id).unlink()
+    except Exception:
+        pass
+
+
+def bound_tickets(root: Path) -> set[str]:
+    """Every ticket that some session is bound to. A binding file cannot tell
+    whether its session is still alive, so any binding counts as live. Close
+    and abort remove the bindings of their ticket, and a session that finds
+    its own binding stale removes it (see `run_for_hook`)."""
+    d = runs_dir(root) / "sessions"
+    out: set[str] = set()
+    for p in d.glob("*.txt") if d.is_dir() else []:
+        try:
+            value = p.read_text(encoding="utf-8").strip()
+        except Exception:
+            continue
+        if value:
+            out.add(value)
+    return out
+
+
 def run_for_hook(root: Path, session_id: str | None) -> dict | None:
-    """The run a Claude hook acts on: this session's bound ticket first, else
-    the most recently started open run on the current branch. Never raises."""
+    """The run a Claude hook acts on. Never raises.
+
+    - A session bound to a ticket gets that ticket's newest open run. If the
+      ticket has no open run, the binding is stale: it is removed and the
+      result is None. It never falls back to the branch, because that would
+      gate this session with a run that another session drives.
+    - An unbound session gets the newest open run on the current branch whose
+      ticket no session is bound to. Several sessions (for example T3 Code
+      threads) can share one checkout and branch; a ticket that another
+      session drives never gates this one.
+    """
     try:
         bound = session_ticket(root, session_id)
         if bound:
             runs = open_runs(root, ticket=bound)
-            return runs[-1] if runs else None
-        runs = open_runs(root, branch=util.current_branch(root))
+            if runs:
+                return runs[-1]
+            clear_session(root, session_id)
+            return None
+        taken = bound_tickets(root)
+        runs = [r for r in open_runs(root, branch=util.current_branch(root)) if r.get("ticket") not in taken]
         return runs[-1] if runs else None
     except Exception:
         return None

@@ -36,11 +36,28 @@
             "timeout": 20
           }
         ]
+      },
+      {
+        "matcher": "ExitPlanMode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{{python}}",
+            "args": [
+              "-c",
+              "import os,runpy,sys;p=os.path.join(os.environ.get('CLAUDE_PROJECT_DIR','.'),*sys.argv[1].split('/'));sys.argv=sys.argv[1:];os.path.isfile(p) and runpy.run_path(p,run_name='__main__')",
+              ".atw/core/atw.py",
+              "hook",
+              "planproposed"
+            ],
+            "timeout": 20
+          }
+        ]
       }
     ],
     "PostToolUse": [
       {
-        "matcher": "ExitPlanMode",
+        "matcher": "ExitPlanMode|AskUserQuestion",
         "hooks": [
           {
             "type": "command",

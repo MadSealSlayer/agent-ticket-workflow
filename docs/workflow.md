@@ -27,15 +27,26 @@ close with evidence.
 ## Lifecycle
 
 ```
+/ticket new  -> draft from the conversation -> user approves -> atw new-ticket -> /ticket <id>
 /ticket <id>
   -> classify the kind (confirm when unclear)  -> load project context
   -> code:     plan + approval -> RED on behavior -> implement -> tests/lint/deps
-               -> (simplify) -> clean-room review -> close
+               -> (simplify) -> clean-room review  } in parallel
+                              + realistic check     } (big changes)  -> close
   -> non-code: deliverable at its required place -> nocode/placement/provenance -> present -> close
 ```
 
 `atw close` re-checks every gate and appends one line to the run log. The ticket file itself is
 never changed.
+
+**No ticket yet.** Often the user is not the ticket owner, and there is no ticket. They talk with
+the agent and settle what to change. `/ticket new` (or "make a ticket from this") turns that into
+a ticket. The agent drafts it in fixed sections: problem / goal, settled decisions, acceptance
+criteria, out of scope, open questions. Only what the user stated or agreed to goes in. The user
+sees the full draft and approves it; nothing is written before that. Then `atw new-ticket` writes
+the file once, with the next free number and a `Source: conversation <date>` line (ADR 0015).
+The normal flow follows, and each settled decision is recorded with `atw decide`, so the reviewer
+does not raise it again.
 
 ## Kinds
 
@@ -67,13 +78,14 @@ protected paths, the run must be re-kinded honestly. Hiding the change is not al
 
 | Gate | Checks | Kinds |
 |---|---|---|
-| `plan` | The plan was approved. On Claude Code, a hook stamps the plan-mode exit. On other hosts, a saved plan file plus the user's approval words are recorded and hashed | code |
+| `plan` | The plan was approved. On Claude Code, a hook stamps the plan-mode exit; inside T3 Code, where `ExitPlanMode` always returns an error, a hook stamps an exact `Approve` answer to the `Plan` question that follows it (the route is recorded). On other hosts, a saved plan file plus the user's approval words are recorded and hashed | code |
 | `red` | Every proof-set test **fails on behavior** before the change | code |
 | `tests` | Re-runs the tests the diff touches, plus the whole proof set, which must now pass | code |
 | `lint` | The configured linter, on changed lines only | code |
 | `deps` | Every new third-party import is declared (pip / npm presets) | code |
 | `simplify` | Optional. A simplify report on the current diff | code |
 | `audit` | A clean-room review report for the current diff, with no open Critical or Warning | code |
+| `verify` | Big changes only: a fresh agent ran the change for real (the project's own check), nothing failed, and anything not run was accepted by the user | code |
 | `nocode` | The diff does not touch `protected_paths` | non-code |
 | `placement` | The deliverable is where its kind requires | non-code |
 | `provenance` | Findings have `## Sources`, and claims are tagged `measured` or `inferred` with a source id | investigation |
@@ -85,7 +97,8 @@ Gates are **live** or **recorded**:
   record, configured commands). `atw status` reuses it while nothing changed. `atw close`
   always re-runs them.
 - Recorded gates are stored with a hash and go **stale** when what they cover changes: plan,
-  red, simplify, audit. An edit after the review makes the audit stale.
+  red, simplify, audit, verify. An edit after the review makes the audit stale. The realistic
+  check goes stale only after `verify.recheck_after_rounds` more review rounds on a changed diff.
 
 Asking open questions, and presenting investigation findings before closing, are deliberately
 **not** gates, because a script cannot check them. The skills require them.
@@ -160,9 +173,38 @@ reasoning. These studies point the same way:
 Treat the effect sizes as indicative; several of these are preprints. The rule is still cheap and
 sound: **never validate code in the context window that produced it.**
 
+**Another model family (T3 Code).** A reviewer from the same model family as the author shares
+its blind spots. With `audit.route: "t3-delegate"`, a Claude session inside T3 Code hands the
+packet to a T3 child task on another provider (`audit.t3`, Codex by default). The child shares
+the checkout but follows read-only rules, and `accept-review` still checks the diff hash. When the
+child cannot run, the round falls back to a Claude sub-agent (ADR 0016).
+
 One reviewer with five checks and a short time budget is a deliberate choice for speed and cost.
 A parallel review with several agents covers more angles. It costs more tokens, and it needs a
 timeout: without one, a single slow parallel reviewer can stall the gate.
+
+## Running it for real (big changes)
+
+Proof tests usually mock their neighbours, and the review only reads. A change can pass both and
+still not work when someone uses it. So a **big** code change is also run for real before close:
+coordinated, or with at least `verify.min_planned_files` planned files or `verify.min_proof_ids`
+proof tests (8 each by default; `verify.when: "always"` checks every code run). `atw plan` and
+`atw red` say when the requirement starts.
+
+`atw verify-packet` writes a packet with the ticket and the project's own way to run a change
+(`verify.how`: a skill, a command or a checklist). A fresh agent, the same route as the review
+(another model in T3 Code), runs it and reports each acceptance criterion as checked, failed or
+not run. It writes only into its own folder (and `verify.ignore` paths), so it runs **in parallel
+with review round 1** without making that review stale. `atw accept-verify` refuses a failure
+always, and "not run" items unless the user accepts them in their own words. When no check is
+configured, every criterion is "not run" and the user decides.
+
+The check is not bound to every later edit: a fix after a review finding does not need a new run.
+After `verify.recheck_after_rounds` (2) more review rounds on a changed diff, the code has moved
+far enough that `verify` goes stale. ADR 0019 has the reasons.
+
+A project's existing check is never dropped at install: `atw detect` reports it as a similar
+practice, setup puts it into `verify.how`, and `atw doctor` warns while it is not used.
 
 ## Investigations
 
@@ -206,7 +248,8 @@ The core never calls Jira and needs no token. The `jira` skill:
 | Guardrail | What it does |
 |---|---|
 | Stop hook (Claude Code) | Blocks the end of a turn while a gate is unmet |
-| Guard hook (Claude Code) | Denies history rewrites (`reset --hard`, `--amend`, `rebase`, force push) and other patterns in `guards` |
+| Guard hook (Claude Code) | Parses each shell command, then denies history rewrites (`reset --hard`, `--amend`, `rebase`, force push) and asks before a push (`guards.git`). Asks before `git add` of data files and before a shell command deletes a test file. Text that only mentions a command (a quoted string, a grep pattern, a heredoc body) never matches |
+| Test markers (Claude Code) | An edit that adds a skip or focus marker to a test file (`xit(`, `fit(`, `.only(`, `@pytest.mark.skip`, ...) asks the user first (`guards.test_markers`) |
 | Run baseline | Files that were untracked before a run starts are never counted as the run's changes |
 | No push | The agent commits locally only when asked. The developer pushes and opens PRs |
 | Hygiene | `atw hygiene` reports misplaced files. It is read-only |
@@ -243,6 +286,21 @@ Consider a code graph only when search stops being enough.
 Every run has an explicit id (`atw start` prints it). Pass it with `--run` or `$ATW_RUN` when
 several tickets are open in parallel sessions. Run state lives under `.atw/runs/`, which is
 gitignored.
+
+Several sessions can share one checkout and one branch (for example T3 Code threads). On Claude
+Code the hooks keep them apart:
+- A session is bound to a ticket when it runs `atw start <ticket>`, or a command that changes a
+  run with `--ticket <ticket>` or `--run <ticket>/<id>`. `atw status` does not bind.
+- A bound session is gated only by its own ticket's run. If that ticket has no open run, the
+  binding is stale: it is removed, and nothing gates the session.
+- An unbound session is gated by the newest open run on the branch that no session is bound to.
+  A ticket that another session drives never gates it.
+- The plan stamps follow the same rule (the approval, and in T3 Code the proposal and the
+  `Plan` answer), so one session's plan approval never passes another ticket's plan gate.
+- After `/clear`, the session has a new id and is not bound yet, while its ticket is still bound
+  to the old id. Run one command that changes the run with `--run <ticket>/<id>` first (for
+  example `atw gate tests --run ...`), so the new session is bound, and only then enter plan
+  mode.
 
 ## Lessons from the original project
 
